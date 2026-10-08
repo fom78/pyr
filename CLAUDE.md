@@ -10,6 +10,7 @@ Next.js 16 (App Router, `src/`), TypeScript, Prisma 7 + PostgreSQL 17, Better Au
 ## Comandos
 | Comando | Qué hace |
 |---|---|
+| `bash scripts/dev.sh` | Todo el entorno local de una (requisitos, .env, deps, Postgres, migraciones, seed, app + worker). `--tests` / `--solo-preparar` / `--sin-worker` |
 | `docker compose up -d` | Postgres local en `localhost:5440` (+ base `pyr_test`) |
 | `npm run dev` | App en http://localhost:3200 |
 | `npm run worker` | Worker de tareas programadas (pg-boss) en modo watch · `npm run worker:once` corre todas una vez |

@@ -13,6 +13,10 @@ Stack: Next.js 16 · TypeScript · PostgreSQL 17 · Prisma 7 · Better Auth · T
 - Docker
 
 ## Levantar en local
+
+**Todo de una** (Git Bash, WSL, Linux o macOS): `bash scripts/dev.sh` (o `npm run dev:all`). Verifica requisitos, crea el `.env`, instala dependencias, levanta Postgres, migra, corre el seed y arranca app + worker. Opciones: `--sin-worker`, `--solo-preparar`, `--tests`.
+
+Paso a paso (en Windows PowerShell 5 usá un comando por línea; no soporta `&&`):
 ```bash
 cp .env.example .env          # completar BETTER_AUTH_SECRET y ADMIN_PASSWORD
 npm install

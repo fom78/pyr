@@ -5,7 +5,8 @@ export async function login(page: Page, username: string, password: string) {
   await page.getByLabel("Usuario").fill(username);
   await page.getByLabel("Contraseña").fill(password);
   await page.getByRole("button", { name: "Ingresar" }).click();
-  await expect(page.getByRole("heading", { name: /Hola/ })).toBeVisible();
+  // La primera vez el server de dev compila varias rutas: margen amplio
+  await expect(page.getByRole("heading", { name: /Hola/ })).toBeVisible({ timeout: 60_000 });
 }
 
 /** Responde la pregunta en pantalla con la primera opción y espera a la siguiente (o al resultado). */

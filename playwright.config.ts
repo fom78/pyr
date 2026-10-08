@@ -10,7 +10,8 @@ const DB = process.env.TEST_DATABASE_URL ?? "postgresql://pyr:pyr@localhost:5440
 
 export default defineConfig({
   testDir: "tests/e2e",
-  timeout: 90_000,
+  timeout: 180_000,
+  expect: { timeout: 20_000 },
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,

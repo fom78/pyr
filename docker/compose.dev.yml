@@ -1,0 +1,20 @@
+# Servicios de soporte para desarrollo local. La app corre con `npm run dev`.
+name: pyr-local
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pyr
+      POSTGRES_PASSWORD: pyr
+      POSTGRES_DB: pyr
+    ports:
+      - "127.0.0.1:${PYR_DB_PORT:-5440}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pyr"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata:

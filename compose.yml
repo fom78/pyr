@@ -1,0 +1,3 @@
+# Atajo: `docker compose up -d` levanta Postgres local para desarrollo.
+include:
+  - docker/compose.dev.yml

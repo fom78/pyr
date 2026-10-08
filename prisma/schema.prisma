@@ -1,0 +1,617 @@
+// PyR — modelo de datos.
+// Convenciones: ids string (cuid), fechas en UTC, nombres en inglés.
+// Las tablas de auth (User, Session, Account, Verification, RateLimit) siguen el esquema de Better Auth.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Auth / usuarios ─────────────────────────────
+
+enum Role {
+  ADMIN
+  MOD
+  USER
+}
+
+model User {
+  id              String    @id @default(cuid())
+  name            String // nombre visible
+  email           String    @unique
+  emailVerified   Boolean   @default(false)
+  image           String?
+  username        String?   @unique
+  displayUsername String?
+  role            Role      @default(USER)
+  timezone        String    @default("America/Argentina/Buenos_Aires")
+  onboardedAt     DateTime?
+  preferences     Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  sessions           Session[]
+  accounts           Account[]
+  bans               Ban[]                @relation("BannedUser")
+  bansIssued         Ban[]                @relation("BanIssuer")
+  auditLogs          AuditLog[]
+  questionsAuthored  Question[]           @relation("QuestionAuthor")
+  questionsReviewed  Question[]           @relation("QuestionReviewer")
+  importJobs         ImportJob[]
+  attempts           Attempt[]
+  memberships        CategoryMembership[]
+  categoryStandings  CategoryStanding[]
+  streaks            StreakState[]
+  tournamentEntries  TournamentEntry[]
+  tournamentStanding TournamentStanding[]
+  creditTransactions CreditTransaction[]  @relation("CreditOwner")
+  creditsIssued      CreditTransaction[]  @relation("CreditIssuer")
+  quizzesCreated     Quiz[]
+  tournamentsCreated Tournament[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+// Usada por el rate limiter de Better Auth (login/registro).
+model RateLimit {
+  id          String @id @default(cuid())
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+}
+
+// Rate limiter propio (envío de respuestas, uploads, etc.). Ventana fija por clave.
+model RateBucket {
+  key         String   @id
+  count       Int
+  windowStart DateTime
+}
+
+model Ban {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation("BannedUser", fields: [userId], references: [id], onDelete: Cascade)
+  reason      String
+  startsAt    DateTime  @default(now())
+  endsAt      DateTime? // null = permanente
+  revokedAt   DateTime?
+  createdById String
+  createdBy   User      @relation("BanIssuer", fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, startsAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String // ej. "question.approve", "ban.create", "credits.adjust"
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+  @@index([actorId])
+}
+
+// ───────────────────────────── Configuración ─────────────────────────────
+
+// Parámetros de negocio. Las keys y sus schemas viven en src/server/config/registry.ts.
+model AppSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+// Textos introductorios editables de la sección "Cómo se juega". Los números salen del config.
+model RulesText {
+  section   String   @id
+  content   String
+  updatedAt DateTime @updatedAt
+}
+
+// ───────────────────────────── Contenido ─────────────────────────────
+
+model Category {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  description   String?
+  icon          String? // nombre de ícono lucide o emoji
+  imageKey      String?
+  active        Boolean  @default(true)
+  frequencyDays Int? // null = usa config global
+  settings      Json     @default("{}") // overrides de config por categoría
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  questions   QuestionCategory[]
+  quizzes     Quiz[]
+  memberships CategoryMembership[]
+  standings   CategoryStanding[]
+  streaks     StreakState[]
+  tournaments TournamentCategory[]
+}
+
+model Tag {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  questions QuestionTag[]
+}
+
+enum QuestionType {
+  TEXT
+  IMAGE
+  IMAGE_TEXT
+}
+
+enum ReviewStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model Question {
+  id             String       @id @default(cuid())
+  type           QuestionType @default(TEXT)
+  text           String?
+  normalizedText String       @default("") // minúsculas sin acentos; índice trigram
+  imageKey       String?
+  difficulty     Int          @default(2) // 1..5
+  explanation    String?
+  source         String?
+  status         ReviewStatus @default(PENDING_REVIEW)
+  reviewComment  String?
+  reviewedAt     DateTime?
+  reviewedById   String?
+  reviewedBy     User?        @relation("QuestionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  authorId       String?
+  author         User?        @relation("QuestionAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  version        Int          @default(1)
+  parentId       String? // versión anterior
+  parent         Question?    @relation("QuestionVersions", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Question[]   @relation("QuestionVersions")
+  shuffleOptions Boolean? // null = hereda del cuestionario
+  archived       Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  options       QuestionOption[]
+  categories    QuestionCategory[]
+  tags          QuestionTag[]
+  quizQuestions QuizQuestion[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([normalizedText(ops: raw("gin_trgm_ops"))], type: Gin, map: "Question_normalizedText_trgm_idx")
+}
+
+model QuestionOption {
+  id         String   @id @default(cuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  position   Int
+  text       String?
+  imageKey   String?
+  isCorrect  Boolean  @default(false)
+
+  @@unique([questionId, position])
+}
+
+model QuestionCategory {
+  questionId String
+  categoryId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, categoryId])
+  @@index([categoryId])
+}
+
+model QuestionTag {
+  questionId String
+  tagId      String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, tagId])
+  @@index([tagId])
+}
+
+enum ImportStatus {
+  PREVIEW
+  COMMITTED
+  DISCARDED
+}
+
+model ImportJob {
+  id           String       @id @default(cuid())
+  authorId     String
+  author       User         @relation(fields: [authorId], references: [id])
+  fileName     String
+  status       ImportStatus @default(PREVIEW)
+  rows         Json // [{ row, data, errors[], warnings[] }]
+  validCount   Int          @default(0)
+  invalidCount Int          @default(0)
+  createdCount Int          @default(0)
+  autoApprove  Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  committedAt  DateTime?
+}
+
+// ───────────────────────────── Cuestionarios ─────────────────────────────
+
+enum QuizStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  CLOSED
+  EXPIRED
+}
+
+enum TimeMode {
+  PER_QUESTION
+  TOTAL
+}
+
+model Quiz {
+  id               String     @id @default(cuid())
+  title            String
+  description      String?
+  categoryId       String?
+  category         Category?  @relation(fields: [categoryId], references: [id])
+  tournamentId     String?
+  tournament       Tournament? @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  // status es un caché sincronizado por el worker; la fuente de verdad es getQuizStatus(quiz, now).
+  status           QuizStatus @default(DRAFT)
+  publishedAt      DateTime? // null = DRAFT
+  opensAt          DateTime
+  closesAt         DateTime
+  expiresAt        DateTime // fin del período computable
+  timeMode         TimeMode   @default(PER_QUESTION)
+  timeLimitSec     Int        @default(20) // por pregunta o total según timeMode
+  shuffleQuestions Boolean    @default(true)
+  shuffleOptions   Boolean    @default(true)
+  scoring          Json       @default("{}") // snapshot { base, timeBonus, wrongPenalty } congelado al publicar
+  copiedFromId     String?
+  createdById      String?
+  createdBy        User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  rankedAt         DateTime? // último recálculo de rankings disparado por este quiz
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  questions QuizQuestion[]
+  attempts  Attempt[]
+
+  @@index([categoryId, opensAt])
+  @@index([tournamentId, opensAt])
+  @@index([status, closesAt])
+}
+
+model QuizQuestion {
+  id             String   @id @default(cuid())
+  quizId         String
+  quiz           Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  questionId     String
+  question       Question @relation(fields: [questionId], references: [id])
+  position       Int
+  shuffleOptions Boolean? // override por pregunta dentro del cuestionario
+  voided         Boolean  @default(false) // anulada: no suma ni resta para nadie
+
+  answers AttemptAnswer[]
+
+  @@unique([quizId, questionId])
+  @@index([questionId])
+}
+
+// ───────────────────────────── Juego ─────────────────────────────
+
+enum AttemptStatus {
+  IN_PROGRESS
+  FINISHED
+  TIMED_OUT
+  CANCELLED
+}
+
+model Attempt {
+  id            String        @id @default(cuid())
+  quizId        String
+  quiz          Quiz          @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status        AttemptStatus @default(IN_PROGRESS)
+  questionOrder String[] // ids de QuizQuestion en el orden servido
+  currentIndex  Int           @default(0)
+  startedAt     DateTime      @default(now())
+  deadlineAt    DateTime // límite global del intento
+  finishedAt    DateTime?
+  score         Int           @default(0)
+  correctCount  Int           @default(0)
+  totalTimeMs   Int           @default(0)
+  rewardsGiven  Boolean       @default(false)
+
+  answers     AttemptAnswer[]
+  wildcardUse WildcardUse?
+
+  @@unique([quizId, userId])
+  @@index([userId, startedAt])
+  @@index([status, deadlineAt])
+}
+
+model AttemptAnswer {
+  id               String       @id @default(cuid())
+  attemptId        String
+  attempt          Attempt      @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  quizQuestionId   String
+  quizQuestion     QuizQuestion @relation(fields: [quizQuestionId], references: [id], onDelete: Cascade)
+  index            Int
+  optionOrder      String[] // ids de QuestionOption en el orden mostrado
+  servedAt         DateTime     @default(now())
+  deadlineAt       DateTime
+  answeredAt       DateTime?
+  selectedOptionId String?
+  isCorrect        Boolean      @default(false)
+  timeMs           Int          @default(0)
+  basePoints       Int          @default(0)
+  bonusPoints      Int          @default(0)
+  points           Int          @default(0)
+
+  @@unique([attemptId, quizQuestionId])
+  @@unique([attemptId, index])
+}
+
+// ───────────────────────────── Liga ─────────────────────────────
+
+enum MembershipStatus {
+  ACTIVE
+  LEAVING // período de desvinculación: no juega, ocupa vida
+  LEFT
+}
+
+model CategoryMembership {
+  id               String           @id @default(cuid())
+  userId           String
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId       String
+  category         Category         @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  status           MembershipStatus @default(ACTIVE)
+  joinedAt         DateTime         @default(now())
+  leaveRequestedAt DateTime?
+  lifeReleasesAt   DateTime? // fin del período de desvinculación
+  rejoinAllowedAt  DateTime?
+
+  @@index([userId, status])
+  @@index([categoryId, status])
+}
+
+model CategoryStanding {
+  categoryId     String
+  category       Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank           Int
+  previousRank   Int?
+  points         Int
+  quizzesCounted Int
+  correctCount   Int
+  totalTimeMs    Int
+  computedAt     DateTime @default(now())
+
+  @@id([categoryId, userId])
+  @@index([categoryId, rank])
+}
+
+model StreakState {
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  current    Int      @default(0)
+  best       Int      @default(0)
+  lastQuizId String?
+  updatedAt  DateTime @updatedAt
+
+  @@id([userId, categoryId])
+}
+
+// ───────────────────────────── Torneos ─────────────────────────────
+
+enum TournamentStatus {
+  DRAFT
+  PUBLISHED
+  FINISHED
+  CANCELLED
+}
+
+enum WildcardType {
+  DOUBLE_TOTAL
+  DOUBLE_PER_CORRECT
+  TRIPLE_SURPRISE
+}
+
+model Tournament {
+  id                  String           @id @default(cuid())
+  slug                String           @unique
+  name                String
+  description         String?
+  imageKey            String?
+  status              TournamentStatus @default(DRAFT)
+  startsAt            DateTime
+  endsAt              DateTime
+  registrationOpensAt DateTime
+  registrationEndsAt  DateTime
+  quizCount           Int              @default(5)
+  frequencyDays       Int              @default(3)
+  entryCost           Int              @default(0)
+  maxParticipants     Int?
+  wildcardsPerQuiz    Int              @default(1)
+  scoring             Json             @default("{}") // overrides de puntaje
+  prizes              Json             @default("[]") // [{ rank, credits }]
+  finishedAt          DateTime?
+  cancelledAt         DateTime?
+  createdById         String?
+  createdBy           User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  categories TournamentCategory[]
+  wildcards  TournamentWildcard[]
+  entries    TournamentEntry[]
+  quizzes    Quiz[]
+  standings  TournamentStanding[]
+}
+
+model TournamentCategory {
+  tournamentId String
+  categoryId   String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  category     Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([tournamentId, categoryId])
+}
+
+model TournamentWildcard {
+  tournamentId String
+  tournament   Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  type         WildcardType
+  quantity     Int          @default(1) // cuántos puede usar cada participante en todo el torneo
+
+  @@id([tournamentId, type])
+}
+
+model TournamentEntry {
+  id           String     @id @default(cuid())
+  tournamentId String
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrolledAt   DateTime   @default(now())
+  ledgerTxId   String?
+
+  wildcardUses WildcardUse[]
+
+  @@unique([tournamentId, userId])
+}
+
+model WildcardUse {
+  id        String          @id @default(cuid())
+  entryId   String
+  entry     TournamentEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  attemptId String          @unique
+  attempt   Attempt         @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  type      WildcardType
+  state     Json            @default("{}") // estado privado de la estrategia (ej. preguntas sorteadas)
+  createdAt DateTime        @default(now())
+
+  @@index([entryId])
+}
+
+model TournamentStanding {
+  tournamentId   String
+  tournament     Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank           Int
+  previousRank   Int?
+  points         Int
+  quizzesCounted Int
+  correctCount   Int
+  totalTimeMs    Int
+  computedAt     DateTime   @default(now())
+
+  @@id([tournamentId, userId])
+  @@index([tournamentId, rank])
+}
+
+// ───────────────────────────── Créditos (ledger) ─────────────────────────────
+
+enum CreditTxType {
+  SIGNUP_BONUS
+  QUIZ_REWARD
+  PERFORMANCE_BONUS
+  STREAK_BONUS
+  TOURNAMENT_ENTRY
+  TOURNAMENT_PRIZE
+  TOURNAMENT_REFUND
+  ADMIN_ADJUSTMENT
+  PURCHASE
+}
+
+enum CreditTxStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model CreditTransaction {
+  id             String         @id @default(cuid())
+  userId         String
+  user           User           @relation("CreditOwner", fields: [userId], references: [id], onDelete: Cascade)
+  amount         Int // positivo = alta, negativo = baja
+  type           CreditTxType
+  status         CreditTxStatus @default(APPROVED)
+  reason         String
+  idempotencyKey String         @unique
+  externalRef    String? // id de pago (Mercado Pago, etc.)
+  meta           Json?
+  createdById    String?
+  createdBy      User?          @relation("CreditIssuer", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now())
+  settledAt      DateTime?
+
+  @@index([userId, createdAt])
+  @@index([externalRef])
+}

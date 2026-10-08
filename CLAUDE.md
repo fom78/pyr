@@ -1,0 +1,53 @@
+@AGENTS.md
+
+# PyR — guía para agentes y devs
+
+App web de competencia de preguntas y respuestas (liga por categoría + torneos). UI en **español (es-AR)**; código, tablas y variables en **inglés**.
+
+## Stack
+Next.js 16 (App Router, `src/`), TypeScript, Prisma 7 + PostgreSQL 17, Better Auth, Tailwind 4 + shadcn/ui (radix), Zod 4, pg-boss (worker), ExcelJS, sharp, Vitest, Playwright.
+
+## Comandos
+| Comando | Qué hace |
+|---|---|
+| `docker compose up -d` | Postgres local en `localhost:5440` (+ base `pyr_test`) |
+| `npm run dev` | App en http://localhost:3200 |
+| `npm run worker` | Worker de tareas programadas (pg-boss) en modo watch |
+| `npm run db:migrate` | Crear/aplicar migraciones en dev |
+| `npm run db:seed` | Admin desde env + datos de prueba (si la base está vacía) |
+| `npm run db:reset` | Borra todo, migra y re-seedea |
+| `npm test` | Vitest (unit + integración contra `pyr_test`) |
+| `npm run test:e2e` | Playwright |
+| `npm run typecheck` / `npm run lint` | Chequeos estáticos |
+
+Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderador123!`, `ana` `beto` `caro` `dani` `eli` / `Jugador123!` (eli está baneado).
+
+## Estructura
+- `src/app/(auth)` ingreso/registro · `src/app/(app)` pantallas del jugador · `src/app/admin` panel · `src/app/api` route handlers (juego, archivos, auth, health).
+- `src/server/**` lógica de dominio. Las páginas y actions llaman a servicios; **no** escriben consultas Prisma complejas inline.
+  - Funciones **puras** (testeadas en `tests/unit`): `quiz/status.ts`, `scoring/scoring.ts`, `ranking/compute.ts`, `wildcards/strategies.ts`, `league/lives.ts`, `auth/permissions.ts`.
+  - Servicios con DB: `credits/service.ts` (ledger), `ranking/service.ts`, `config/service.ts`, etc. Aceptan un parámetro `db: Db` (cliente o transacción).
+- `src/generated/prisma` cliente generado (no editar, no versionar).
+
+## Convenciones y decisiones
+- **Next 16 sin Cache Components** (`cacheComponents: false`): casi todo es por usuario y dinámico; usamos el modelo de render dinámico clásico. `src/proxy.ts` (ex-middleware) solo hace chequeo optimista de cookie.
+- **Permisos**: siempre `can(actor, action)` / `requirePermission(action)` / `userCan()`. Nada de `if (role === ...)` sueltos.
+- **Configuración de negocio**: todo parámetro "configurable" vive en `AppSetting` y se declara en `src/server/config/registry.ts` (schema Zod + default + label). Los overridables por categoría se marcan con `categoryOverride`. Nunca hardcodear números de reglas en la UI.
+- **Estado de cuestionarios**: fuente de verdad `getQuizStatus(quiz, now)` (derivado de fechas). La columna `Quiz.status` es un caché que sincroniza el worker.
+- **Puntaje**: snapshot `{ base, timeBonus, wrongPenalty }` guardado en `Quiz.scoring` al publicar; cambiar la config global no altera quizzes publicados salvo "recalcular".
+- **Créditos**: solo vía `postTransaction` (lock por usuario, idempotencia por `idempotencyKey`, sin negativos). Saldo = suma de movimientos APPROVED.
+- **Rankings**: tablas materializadas `CategoryStanding` / `TournamentStanding`, recalculadas por eventos y por el worker (la ventana se desliza). Cálculo en TS (`ranking/compute.ts`).
+- **Errores de usuario**: lanzar `UserError("mensaje en español")`; las actions devuelven `FormState` vía `toFormState`.
+- **Fechas**: en DB en UTC; mostrar con `src/lib/format.ts` en la zona del usuario (default `America/Argentina/Buenos_Aires`).
+- **Imágenes**: `processAndStoreImage` (sharp → WebP) + `StorageAdapter` (local o S3). En la DB se guardan *keys*, nunca URLs (salvo avatares externos de Google).
+- **Registro**: email opcional; si falta se guarda `<usuario>@sin-email.invalid` (Better Auth exige email único).
+- `server-only` solo en módulos exclusivos de Next (`auth/session.ts`); los servicios se comparten con el worker y los tests.
+- Puertos locales: app 3200, Postgres 5440 (3000/5433 los usan otros proyectos de la máquina).
+
+## Decisiones de reglas ante ambigüedades
+- La ventana del ranking se evalúa sobre `closesAt`; un quiz EXPIRED nunca computa.
+- Pregunta anulada: no suma ni resta para nadie y su tiempo no cuenta.
+- Abandonar una categoría: pasa a LEAVING (no juega ni figura en tabla, ocupa vida) por `league.leaveCooldownDays`; no puede volver hasta `max(leaveCooldownDays, rejoinBlockDays)` desde que pidió salir. No se puede cancelar la salida.
+- Cuestionarios de torneo no cuentan para la liga de la categoría.
+- Doble total no duplica un puntaje negativo.
+- Usuario baneado: no inicia sesión nueva; si ya tenía sesión ve un aviso y no puede jugar/inscribirse; sale de las tablas en el próximo recálculo.

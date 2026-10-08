@@ -1,0 +1,36 @@
+
+Quiero realizar una app web de competencia de preguntas y repuestas. Efectiva pero simple.
+Debe correr en pc, tablet y celular.
+
+La voy a desplegar en una vps que contratare en la nube (en esta vps colocare mass apps mas adelante)
+DB puede ser postgress.
+
+En la vps debo tener main a produccion y dev con otra db incluso es  para ir viendo como quedan los cambios. La rama dev tb debe correr correctamente en mi laptop de desarrollo.
+
+La app:
+- Elije el stack que creas mejor.
+- los usuarios se deben podderregistrar con username y pass o con su cuenta de gmail (o al menos dejar esta opcion preparada para implementar)
+- Los usuarios pueden ser Admin, mod o usuarios normales
+	- el admin hace todo soy yo en principio.
+	- el mod tiene algunos permisos a crear preguntas, revisionarlas, etc, lo mismo a cuestionarios etc.
+
+- La idea principal del juego es preguntas en diferentes categorias (futbol, cine, serie, paises, etc). 
+Un usuario tiene 3 "vidas" eso quiere decir que puede participar en 3 categorias diferentes.
+cada categoria sacara un cuestionario cada 3 dias(o x dias condfigurables), cada partcipante de esa categoria podra responderlo solo una vez. Se pondera por preguntass correctas y tiempo en responder (busca un buen equilibrio, el admin puede ajustar esto)
+Para la tabla deposiciones en cada categoria se contemplara para cada usuario sus utlimos mejores 5 cuestionarios de los activos, ya quuue luego de un tiempo el custionario pasa a un estado de no computable, pero si el usuario realizo por ejemplo en el ultimo mes 14 cuestionarios en ccine, de los cuales 2 estan no computable, el sistema toma sus mejores 5 en puntos para sumar y dar un valor de puntaje a ese usuario en la tabla de posiciones, con esto se genera una buena dinamica (si se te ocurre algun tip u otra cosa decime). Los valores de los ultimos 5 y eso son ajustables por admin.
+- Evaluar alternativa a que un usuario abandone una categoria para usar esa vida en otra (tal vez tiempo de desvinculacion, etc)
+- Evaluar usarios baneados por admin.
+
+- Las repuestas seran siempre multiple choice, entre 4-5 opciones. 
+- El cuestionario debe ser agiil para responder a contrareloj y enviar al terminar.
+- El cuestionario va a tener un tiempo en su estado de preparacion, en estado de que se puede jugar y asi, tampoco quiero un cuestionario que salio hace 3 meses que aun se pueda responder.
+- Las preguntas pueden ser texto. Imagen o imagen mas texto.
+- Evaluar carga masiva de preguntas repuestas, tal vez subiendo un excel por un admin o mod, ese excel siguiendo alguna plantilla.
+- Cada user puede ver ademas de su perfil y seteos basicos, los cuestionarios segun categoria donde participa, ya sea este en el estado que esten, pero siempre muestra primero lo vigente. En la pantalla principal muestra las cat donde participa stats principales y lo que hay nuevo, si hay un nuevo custionario, etc.
+
+
+
+
+
+
+

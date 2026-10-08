@@ -246,3 +246,14 @@ export async function finishDueTournaments(now = new Date()) {
   for (const t of due) if (await finishTournament(t.id, now)) n++;
   return n;
 }
+
+/** Fechas sugeridas para un torneo nuevo: empieza en una semana, dura 3 semanas, inscripción hasta 3 días después del inicio. */
+export function suggestTournamentDates(now = new Date()) {
+  const startsAt = new Date(Math.ceil((now.getTime() + 7 * DAY) / DAY) * DAY);
+  return {
+    startsAt,
+    endsAt: new Date(startsAt.getTime() + 21 * DAY),
+    registrationOpensAt: now,
+    registrationEndsAt: new Date(startsAt.getTime() + 3 * DAY),
+  };
+}

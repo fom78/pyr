@@ -12,7 +12,7 @@ Next.js 16 (App Router, `src/`), TypeScript, Prisma 7 + PostgreSQL 17, Better Au
 |---|---|
 | `docker compose up -d` | Postgres local en `localhost:5440` (+ base `pyr_test`) |
 | `npm run dev` | App en http://localhost:3200 |
-| `npm run worker` | Worker de tareas programadas (pg-boss) en modo watch |
+| `npm run worker` | Worker de tareas programadas (pg-boss) en modo watch · `npm run worker:once` corre todas una vez |
 | `npm run db:migrate` | Crear/aplicar migraciones en dev |
 | `npm run db:seed` | Admin desde env + datos de prueba (si la base está vacía) |
 | `npm run db:reset` | Borra todo, migra y re-seedea |
@@ -44,10 +44,24 @@ Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderad
 - `server-only` solo en módulos exclusivos de Next (`auth/session.ts`); los servicios se comparten con el worker y los tests.
 - Puertos locales: app 3200, Postgres 5440 (3000/5433 los usan otros proyectos de la máquina).
 
+## Infra y deploy
+- Imagen única (`Dockerfile`): web = `node server.js` (Next standalone), worker = `node dist/worker.mjs`, migraciones+seed = servicio `migrate` (`prisma migrate deploy && node dist/seed.mjs`). `npm run build:worker` bundlea worker y seed con esbuild.
+- `docker/compose.prod.yml` es el stack de un entorno (prod o dev) en la VPS; `infra/proxy/` es el Caddy compartido (un archivo por app en `sites/`). Guía completa: `docs/deploy.md`.
+- CI: `.github/workflows/ci.yml` (lint, typecheck, Vitest con Postgres, build, Playwright). Deploy: `deploy.yml` (push a `dev` → staging, `main` → producción) vía GHCR + SSH.
+- **package-lock.json**: npm en Windows tiene un bug con dependencias opcionales por plataforma (rolldown, lightningcss, etc.) que deja el lockfile incompleto y rompe `npm ci` en Linux. Si hay que regenerarlo, hacerlo dentro de un contenedor Linux:
+  `docker run --rm -v "$PWD:/app" -w /app node:24-bookworm-slim npm install --package-lock-only --ignore-scripts` y luego `npm ci` local.
+- `prisma migrate reset` está bloqueado para agentes de IA sin consentimiento explícito del usuario: no usarlo sin pedir permiso.
+
 ## Decisiones de reglas ante ambigüedades
 - La ventana del ranking se evalúa sobre `closesAt`; un quiz EXPIRED nunca computa.
 - Pregunta anulada: no suma ni resta para nadie y su tiempo no cuenta.
 - Abandonar una categoría: pasa a LEAVING (no juega ni figura en tabla, ocupa vida) por `league.leaveCooldownDays`; no puede volver hasta `max(leaveCooldownDays, rejoinBlockDays)` desde que pidió salir. No se puede cancelar la salida.
 - Cuestionarios de torneo no cuentan para la liga de la categoría.
 - Doble total no duplica un puntaje negativo.
-- Usuario baneado: no inicia sesión nueva; si ya tenía sesión ve un aviso y no puede jugar/inscribirse; sale de las tablas en el próximo recálculo.
+- Usuario baneado: se borran sus sesiones, se cierran sus intentos en curso y sale de las tablas al instante (y vuelve al levantar el baneo). No puede iniciar sesión mientras dure.
+- Modo "tiempo por pregunta": cada pregunta vence a su hora; el intento además tiene un límite global (Σ tiempos + `game.attemptGraceSec`). Pausar *entre* preguntas no da ventaja porque la siguiente no se conoce hasta servirse.
+- Las respuestas de un intento solo dicen "registrado"; la corrección se ve al cerrar el cuestionario (`review.revealAnswers`).
+- Racha: cuestionarios de liga consecutivos de una categoría (por fecha de apertura) jugados sin saltear; cada `credits.streakLength` paga `credits.streakBonus`.
+- Torneo: los empates en un puesto premiado cobran el premio completo de ese puesto. El costo no se puede cambiar con inscriptos.
+- Corregir la respuesta correcta de una pregunta bloqueada está permitido (es la vía para errores) y recalcula todos los cuestionarios que la usan; queda en auditoría.
+- Seed: idempotente; nunca pisa una contraseña existente. Datos demo solo si `SEED_DEMO != "false"` y la base no tiene categorías.

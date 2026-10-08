@@ -1,0 +1,99 @@
+name: Deploy
+
+# Se dispara cuando el CI termina bien en `dev` (→ staging) o `main` (→ producción).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Entorno"
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ (github.event.workflow_run.head_branch == 'main' || inputs.environment == 'production') && 'production' || 'staging' }}
+    concurrency:
+      group: deploy-${{ github.event.workflow_run.head_branch || inputs.environment }}
+      cancel-in-progress: false
+    env:
+      BRANCH: ${{ github.event.workflow_run.head_branch || (inputs.environment == 'production' && 'main' || 'dev') }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - name: Variables del entorno
+        id: vars
+        run: |
+          if [ "$BRANCH" = "main" ]; then
+            echo "env=prod" >> "$GITHUB_OUTPUT"
+            echo "profiles=--profile backup" >> "$GITHUB_OUTPUT"
+          else
+            echo "env=dev" >> "$GITHUB_OUTPUT"
+            echo "profiles=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "tag=${BRANCH}-${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.tag }}
+            ${{ steps.vars.outputs.image }}:${{ env.BRANCH }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Copia la definición del stack (compose + scripts de backup) al servidor
+      - name: Copiar stack
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          source: "docker/compose.prod.yml,docker/backup/*"
+          target: /opt/pyr/${{ steps.vars.outputs.env }}
+          strip_components: 1
+
+      - name: Desplegar
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            set -e
+            cd /opt/pyr/${{ steps.vars.outputs.env }}
+            sed -i "s|^PYR_IMAGE=.*|PYR_IMAGE=${{ steps.vars.outputs.image }}|; s|^PYR_TAG=.*|PYR_TAG=${{ steps.vars.outputs.tag }}|" .env
+            docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml ${{ steps.vars.outputs.profiles }} pull
+            # `migrate` corre primero (migraciones + seed idempotente); web y worker arrancan solo si termina bien
+            docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml ${{ steps.vars.outputs.profiles }} up -d --remove-orphans
+            docker image prune -f
+            for i in $(seq 1 30); do
+              s=$(docker inspect -f '{{.State.Health.Status}}' pyr-${{ steps.vars.outputs.env }}-web-1 2>/dev/null || true)
+              [ "$s" = "healthy" ] && echo "web healthy" && exit 0
+              sleep 5
+            done
+            echo "web no quedó healthy"; docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml logs --tail 80 migrate web
+            exit 1

@@ -1,0 +1,6 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Cada app de la VPS tiene su archivo en sites/*.caddy
+import sites/*.caddy

@@ -1,0 +1,27 @@
+# Reverse proxy compartido por todas las apps de la VPS (HTTPS automático con Let's Encrypt).
+# Una sola vez:  docker network create proxy  &&  docker compose -f infra/proxy/compose.yml up -d
+# Cada app agrega su archivo en sites/ y se recarga con:
+#   docker compose -f infra/proxy/compose.yml exec caddy caddy reload --config /etc/caddy/Caddyfile
+name: proxy
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [proxy]
+volumes:
+  caddy_data:
+  caddy_config:
+networks:
+  proxy:
+    external: true

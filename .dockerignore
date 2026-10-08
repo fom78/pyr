@@ -1,0 +1,16 @@
+node_modules
+.next
+.next-e2e
+dist
+src/generated
+storage
+coverage
+test-results
+playwright-report
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+pyr.txt

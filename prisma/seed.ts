@@ -27,7 +27,6 @@ const at = (ms: number) => new Date(now.getTime() + ms);
 const SCORING = { base: 100, timeBonus: 50, wrongPenalty: 0 };
 
 async function upsertUser(username: string, password: string, role: Role, name: string, email?: string) {
-  const passwordHash = await hash(password);
   const user = await prisma.user.upsert({
     where: { username },
     create: {
@@ -41,8 +40,8 @@ async function upsertUser(username: string, password: string, role: Role, name: 
     update: { role },
   });
   const account = await prisma.account.findFirst({ where: { userId: user.id, providerId: "credential" } });
-  if (account) await prisma.account.update({ where: { id: account.id }, data: { password: passwordHash } });
-  else await prisma.account.create({ data: { userId: user.id, accountId: user.id, providerId: "credential", password: passwordHash } });
+  // Solo se define la contraseña al crear: re-ejecutar el seed nunca pisa una contraseña cambiada.
+  if (!account) await prisma.account.create({ data: { userId: user.id, accountId: user.id, providerId: "credential", password: await hash(password) } });
   await grantSignupBonus(user.id);
   return user;
 }

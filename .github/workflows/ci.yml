@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: postgresql://pyr:pyr@localhost:5432/pyr_test
+  TEST_DATABASE_URL: postgresql://pyr:pyr@localhost:5432/pyr_test
+  BETTER_AUTH_SECRET: ci-secret-not-for-production-0123456789
+  ADMIN_PASSWORD: Admin1234!
+  NEXT_TELEMETRY_DISABLED: 1
+
+jobs:
+  check:
+    name: Lint, tipos y tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pyr
+          POSTGRES_PASSWORD: pyr
+          POSTGRES_DB: pyr_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pyr" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build (verifica que compila)
+        run: npx next build && npm run build:worker
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: check
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pyr
+          POSTGRES_PASSWORD: pyr
+          POSTGRES_DB: pyr_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pyr" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      CI: "true"
+      BETTER_AUTH_URL: http://localhost:3201
+      APP_URL: http://localhost:3201
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: test-results/
+          retention-days: 7

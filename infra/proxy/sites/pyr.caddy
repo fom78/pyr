@@ -1,0 +1,26 @@
+# PyR — producción y staging. Reemplazar los dominios por los reales.
+(pyr_common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	request_body {
+		max_size 30MB
+	}
+}
+
+trivia.example.com {
+	import pyr_common
+	reverse_proxy pyr-prod-web:3000
+}
+
+dev.trivia.example.com {
+	import pyr_common
+	# Staging: evita que lo indexen buscadores
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy pyr-dev-web:3000
+}

@@ -1,0 +1,89 @@
+# Stack de una instancia de PyR (producción o staging) en la VPS.
+# Se levanta una vez por entorno con su propio archivo .env y nombre de proyecto:
+#   docker compose -p pyr-prod --env-file /opt/pyr/prod/.env -f compose.prod.yml up -d
+#   docker compose -p pyr-dev  --env-file /opt/pyr/dev/.env  -f compose.prod.yml up -d
+# Cada stack tiene su red interna y su base de datos. Solo `web` se conecta a la red compartida `proxy` (Caddy).
+# Ningún puerto se publica en el host.
+
+x-app: &app
+  image: ${PYR_IMAGE:-ghcr.io/OWNER/pyr}:${PYR_TAG:-latest}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://${POSTGRES_USER:-pyr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pyr}
+    NODE_ENV: production
+  networks: [internal]
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pyr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Definí POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-pyr}
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+    networks: [internal]
+
+  # Aplica migraciones en cada deploy y termina. web y worker esperan a que termine bien.
+  migrate:
+    <<: *app
+    restart: "no"
+    # Migraciones + seed idempotente (crea el admin si no existe; datos demo solo si SEED_DEMO=true y la base está vacía)
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/seed.mjs"]
+    depends_on:
+      db: { condition: service_healthy }
+
+  web:
+    <<: *app
+    volumes:
+      - uploads:/app/storage/uploads
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks:
+      internal: {}
+      proxy:
+        aliases: ["${PYR_PROXY_ALIAS:-pyr-web}"]
+
+  worker:
+    <<: *app
+    command: ["node", "dist/worker.mjs"]
+    healthcheck: { disable: true }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  # Backups diarios con pg_dump (habilitar con --profile backup; en la VPS solo en producción).
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    profiles: [backup]
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-pyr}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-pyr}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_CRON: ${BACKUP_CRON:-30 3 * * *}
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+    volumes:
+      - ${BACKUP_DIR:-./backups}:/backups
+      - ./backup/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./backup/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [internal]
+
+volumes:
+  db:
+  uploads:
+
+networks:
+  internal: {}
+  proxy:
+    external: true

@@ -24,7 +24,8 @@ export default defineConfig({
   },
   projects: [{ name: "mobile", use: { ...devices["Pixel 7"] } }],
   webServer: {
-    command: process.env.CI ? `npx next start -p ${PORT}` : `npx next dev -p ${PORT}`,
+    // next start no es compatible con output standalone: usamos el server de dev (el build se verifica aparte)
+    command: `npx next dev -p ${PORT}`,
     url: `http://localhost:${PORT}/api/health`,
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
@@ -32,7 +33,7 @@ export default defineConfig({
       DATABASE_URL: DB,
       BETTER_AUTH_URL: `http://localhost:${PORT}`,
       APP_URL: `http://localhost:${PORT}`,
-      NEXT_DIST_DIR: process.env.CI ? ".next" : ".next-e2e",
+      NEXT_DIST_DIR: ".next-e2e",
     },
   },
 });

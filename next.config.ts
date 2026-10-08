@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   // (sin Cache Components). Ver decisión en CLAUDE.md.
   cacheComponents: false,
   output: "standalone",
+  distDir: process.env.NEXT_DIST_DIR || ".next", // E2E usa un directorio aparte para convivir con `npm run dev`
   poweredByHeader: false,
   serverExternalPackages: ["@node-rs/argon2", "pino", "pino-pretty", "pg-boss", "exceljs", "sharp"],
   experimental: {

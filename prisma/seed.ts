@@ -36,6 +36,7 @@ async function upsertUser(username: string, password: string, role: Role, name: 
       name,
       email: email || `${username}@sin-email.invalid`,
       role,
+      onboardedAt: new Date(),
     },
     update: { role },
   });

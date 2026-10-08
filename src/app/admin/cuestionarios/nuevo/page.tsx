@@ -3,6 +3,7 @@ import { suggestQuizDefaults } from "@/server/quiz/service";
 import { prisma } from "@/server/db";
 import { PageHeader } from "@/components/common";
 import { toDateTimeInput } from "@/lib/format";
+import { readScoring } from "@/server/scoring/attempt";
 import { QuizForm } from "../quiz-form";
 import { quizRefOptions } from "../refs";
 
@@ -39,7 +40,7 @@ export default async function NewQuizPage({ searchParams }: { searchParams: Prom
           timeLimitSec: d.timeLimitSec,
           shuffleQuestions: true,
           shuffleOptions: true,
-          ...d.scoring,
+          ...(tournament ? readScoring(tournament.scoring, d.scoring) : d.scoring),
         }}
       />
     </>

@@ -1,8 +1,7 @@
 "use client";
 
-import { useTransition } from "react";
 import { Copy, Eye, EyeOff, RefreshCw, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import { useActionToast } from "@/components/use-action-toast";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -16,19 +15,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import type { QuizStatus } from "@/generated/prisma/enums";
-import type { FormState } from "@/server/actions";
 import { copyQuizAction, deleteQuizAction, publishQuizAction, recalculateQuizAction, unpublishQuizAction } from "../actions";
-
-export function useActionToast() {
-  const [pending, start] = useTransition();
-  const run = (fn: () => Promise<FormState | void>, ok: string) =>
-    start(async () => {
-      const r = await fn();
-      if (r && r.ok === false) toast.error(r.error);
-      else toast.success(ok);
-    });
-  return { pending, run };
-}
 
 export function QuizActions({ id, status, canPublish, canRecalc }: { id: string; status: QuizStatus; canPublish: boolean; canRecalc: boolean }) {
   const { pending, run } = useActionToast();

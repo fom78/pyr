@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect } from "@/components/forms/native-select";
 import { cn } from "@/lib/utils";
 import { changeCorrectAction, shuffleOverrideAction, voidQuestionAction } from "../actions";
-import { useActionToast } from "./quiz-actions";
+import { useActionToast } from "@/components/use-action-toast";
 
 type Item = {
   id: string;

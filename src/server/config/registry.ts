@@ -119,6 +119,14 @@ export const settingsRegistry = {
     group: "Cuestionarios",
   }),
 
+  "questions.duplicateThreshold": def({
+    schema: z.number().min(0.2).max(1),
+    default: 0.55,
+    label: "Umbral de posible duplicado",
+    help: "Similitud de texto (0 a 1) a partir de la cual se avisa que una pregunta podría estar repetida.",
+    group: "Cuestionarios",
+  }),
+
   // ── Puntaje ──
   "scoring.base": def({
     schema: int(0, 10000),

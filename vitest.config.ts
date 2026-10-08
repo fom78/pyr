@@ -7,6 +7,8 @@ export default defineConfig({
     environment: "node",
     include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
     setupFiles: ["tests/setup.ts"],
+    globalSetup: ["tests/global-setup.ts"],
+    testTimeout: 30_000,
     // Los tests de integración comparten la DB de test: sin paralelismo entre archivos.
     fileParallelism: false,
   },

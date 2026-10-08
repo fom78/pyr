@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   experimental: {
     authInterrupts: true, // habilita forbidden() / unauthorized()
     serverActions: { bodySizeLimit: "2mb" },
+    proxyClientMaxBodySize: "30mb", // importación Excel + zip de imágenes
   },
   turbopack: {
     rules: {

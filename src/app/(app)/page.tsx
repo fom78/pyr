@@ -123,6 +123,11 @@ export default async function HomePage() {
                           <div>
                             <p className="text-lg font-bold tabular-nums">{st ? formatNumber(st.points) : 0}</p>
                             <p className="text-xs text-muted-foreground">puntos</p>
+                            {m.pendingPoints > 0 && (
+                              <p className="text-[11px] font-medium text-primary" title="Entran a la tabla cuando cierre el cuestionario">
+                                +{formatNumber(m.pendingPoints)} pend.
+                              </p>
+                            )}
                           </div>
                           <div>
                             <p className="flex items-center justify-center gap-0.5 text-lg font-bold tabular-nums">

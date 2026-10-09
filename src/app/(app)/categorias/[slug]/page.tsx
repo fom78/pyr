@@ -10,16 +10,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { QuizCard } from "@/components/game/quiz-card";
 import { StandingsTable } from "@/components/game/standings-table";
 import { JoinButton, LeaveButton } from "@/components/game/membership-buttons";
-import { formatDate, formatNumber } from "@/lib/format";
+import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   return { title: slug.charAt(0).toUpperCase() + slug.slice(1) };
 }
 
-export default async function CategoryPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function CategoryPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const user = await requireUser();
   const { slug } = await params;
+  const { tab } = await searchParams;
   const data = await getCategoryPageData(slug, user.id);
   if (!data) notFound();
   const { category, membership, quizzes, standings, myStanding, settings: s, streak } = data;
@@ -38,6 +45,9 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
   const upcoming = quizzes.filter((q) => q.derived === "SCHEDULED");
   const history = quizzes.filter((q) => q.derived === "CLOSED" || q.derived === "EXPIRED");
   const toCard = (q: (typeof quizzes)[number]) => ({ ...q, questionCount: q._count.questions });
+  // Jugados pero todavía vigentes: sus puntos entran a la tabla cuando el cuestionario cierre.
+  const pending = active.filter((q) => q.attempt && q.attempt.status !== "IN_PROGRESS");
+  const pendingPoints = pending.reduce((a, q) => a + (q.attempt?.score ?? 0), 0);
 
   return (
     <>
@@ -88,6 +98,7 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
           <Card>
             <CardContent className="py-3 text-center">
               <p className="text-2xl font-bold tabular-nums">{myStanding ? formatNumber(myStanding.points) : "0"}</p>
+              {pendingPoints > 0 && <p className="text-xs font-medium text-primary">+{formatNumber(pendingPoints)} pendientes</p>}
               <p className="text-xs text-muted-foreground">
                 Puntos <HelpTip label="Cómo se calculan los puntos">{bestKHelp}</HelpTip>
               </p>
@@ -111,7 +122,7 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
         </p>
       )}
 
-      <Tabs defaultValue="cuestionarios">
+      <Tabs defaultValue={tab === "tabla" ? "tabla" : "cuestionarios"}>
         <TabsList className="mb-4">
           <TabsTrigger value="cuestionarios">Cuestionarios</TabsTrigger>
           <TabsTrigger value="tabla">Tabla</TabsTrigger>
@@ -148,9 +159,31 @@ export default async function CategoryPage({ params }: { params: Promise<{ slug:
             </section>
           )}
         </TabsContent>
-        <TabsContent value="tabla">
+        <TabsContent value="tabla" className="grid gap-4">
+          {pending.length > 0 && (
+            <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+              <p className="mb-1 font-medium">
+                Tus puntos pendientes{" "}
+                <HelpTip>
+                  La tabla solo cuenta cuestionarios cerrados, para que nadie saque ventaja por jugar antes. Cuando cierre, el puntaje entra si está
+                  entre tus {s["ranking.bestK"]} mejores.
+                </HelpTip>
+              </p>
+              <ul className="grid gap-0.5">
+                {pending.map((q) => (
+                  <li key={q.id}>
+                    {q.title}: <strong className="tabular-nums">{formatNumber(q.attempt!.score)} pts</strong>{" "}
+                    <span className="text-muted-foreground">· entran cuando cierre, el {formatDateTime(q.closesAt, tz)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {standings.length === 0 ? (
-            <EmptyState title="La tabla todavía está vacía" description="Se arma cuando cierra el primer cuestionario." />
+            <EmptyState
+              title="La tabla todavía está vacía"
+              description="Se arma cuando cierra el primer cuestionario: la tabla solo cuenta cuestionarios cerrados."
+            />
           ) : (
             <StandingsTable
               rows={standings}

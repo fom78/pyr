@@ -30,7 +30,7 @@ export async function getHomeData(userId: string, now = new Date()) {
       include: { category: true, tournament: true, _count: { select: { questions: { where: { voided: false } } } } },
       orderBy: { closesAt: "asc" },
     }),
-    prisma.attempt.findMany({ where: { userId }, select: { quizId: true, status: true, id: true } }),
+    prisma.attempt.findMany({ where: { userId }, select: { quizId: true, status: true, id: true, score: true } }),
     prisma.tournament.findMany({
       where: { status: "PUBLISHED", registrationOpensAt: { lte: now }, registrationEndsAt: { gt: now }, id: { notIn: tournamentIds } },
       orderBy: { registrationEndsAt: "asc" },
@@ -48,6 +48,13 @@ export async function getHomeData(userId: string, now = new Date()) {
       effective: effectiveStatus(m, now),
       standing: standings.find((s) => s.categoryId === m.categoryId) ?? null,
       streak: streaks.find((s) => s.categoryId === m.categoryId) ?? null,
+      // Puntos de cuestionarios jugados que siguen vigentes: entran a la tabla cuando cierren
+      pendingPoints: quizzes
+        .filter((q) => q.categoryId === m.categoryId && !q.tournamentId && getQuizStatus(q, now) === "ACTIVE")
+        .reduce((a, q) => {
+          const att = played.get(q.id);
+          return att && att.status !== "IN_PROGRESS" ? a + att.score : a;
+        }, 0),
     })),
     pending,
     upcoming,

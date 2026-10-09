@@ -10,6 +10,7 @@ Next.js 16 (App Router, `src/`), TypeScript, Prisma 7 + PostgreSQL 17, Better Au
 ## Comandos
 | Comando | Qué hace |
 |---|---|
+| `bash scripts/dev.sh` | Todo el entorno local de una (requisitos, .env, deps, Postgres, migraciones, seed, app + worker). `--tests` / `--solo-preparar` / `--sin-worker` |
 | `docker compose up -d` | Postgres local en `localhost:5440` (+ base `pyr_test`) |
 | `npm run dev` | App en http://localhost:3200 |
 | `npm run worker` | Worker de tareas programadas (pg-boss) en modo watch · `npm run worker:once` corre todas una vez |
@@ -46,6 +47,7 @@ Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderad
 
 ## Infra y deploy
 - Imagen única (`Dockerfile`): web = `node server.js` (Next standalone), worker = `node dist/worker.mjs`, migraciones+seed = servicio `migrate` (`prisma migrate deploy && node dist/seed.mjs`). `npm run build:worker` bundlea worker y seed con esbuild.
+- `scripts/vps-setup.sh` prepara una VPS desde cero (idempotente; genera Caddy y los `.env` porque el repo es privado). Si cambia `infra/proxy/*` o `docker/.env.example`, actualizar también el script. `scripts/vps-domain.sh` cambia los dominios después (Caddy + `APP_URL`) y repite la plantilla de `pyr.caddy`: mantenerlas iguales.
 - `docker/compose.prod.yml` es el stack de un entorno (prod o dev) en la VPS; `infra/proxy/` es el Caddy compartido (un archivo por app en `sites/`). Guía completa: `docs/deploy.md`.
 - CI: `.github/workflows/ci.yml` (lint, typecheck, Vitest con Postgres, build, Playwright). Deploy: `deploy.yml` (push a `dev` → staging, `main` → producción) vía GHCR + SSH.
 - **package-lock.json**: npm en Windows tiene un bug con dependencias opcionales por plataforma (rolldown, lightningcss, etc.) que deja el lockfile incompleto y rompe `npm ci` en Linux. Si hay que regenerarlo, hacerlo dentro de un contenedor Linux:

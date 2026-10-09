@@ -24,9 +24,16 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return { title: t?.name ?? "Torneo" };
 }
 
-export default async function TournamentPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function TournamentPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const user = await requireUser();
   const { slug } = await params;
+  const { tab } = await searchParams;
   const t = await prisma.tournament.findUnique({
     where: { slug },
     include: {
@@ -130,7 +137,7 @@ export default async function TournamentPage({ params }: { params: Promise<{ slu
           </Card>
         </div>
       )}
-      <Tabs defaultValue={entry ? "cuestionarios" : "reglamento"}>
+      <Tabs defaultValue={tab === "tabla" ? "tabla" : entry ? "cuestionarios" : "reglamento"}>
         <TabsList className="mb-4">
           <TabsTrigger value="cuestionarios">Cuestionarios</TabsTrigger>
           <TabsTrigger value="tabla">Tabla</TabsTrigger>

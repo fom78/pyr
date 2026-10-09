@@ -56,3 +56,6 @@ next-env.d.ts
 
 # worker build
 /dist/
+
+# logs locales (scripts/dev.sh)
+/logs/

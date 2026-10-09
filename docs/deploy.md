@@ -60,12 +60,27 @@ chown -R deploy:deploy /opt/proxy /opt/pyr
 
 > Los contenedores escriben los backups como root dentro de `/opt/pyr/prod/backups`; está bien que el dueño de la carpeta sea `deploy`.
 
+### Cambiar los dominios más adelante
+
+Para pasar de `sslip.io`/`nip.io` a un dominio propio (o cambiar de dominio), con los registros DNS ya creados:
+
+```bash
+scp scripts/vps-domain.sh deploy@IP:~/
+ssh deploy@IP
+bash vps-domain.sh midominio.com.ar            # staging queda en dev.midominio.com.ar
+```
+
+Verifica que los nombres apunten a la VPS, reescribe `sites/pyr.caddy` (si `www.` también apunta, lo redirige al dominio principal), actualiza `APP_URL`/`BETTER_AUTH_URL` de prod y dev, recarga Caddy y recrea `web`/`worker` de los entornos que estén corriendo. Guarda copia de lo anterior en `/opt/pyr/domain-backups/`.
+
 ## 2. DNS
 
 Crear registros **A** (y AAAA si hay IPv6) apuntando a la IP de la VPS:
 
 - `trivia.midominio.com`
 - `dev.trivia.midominio.com`
+- opcional `www.trivia.midominio.com` (se redirige al principal)
+
+Con Cloudflare: registros en modo **DNS only** (nube gris). Con el proxy naranja Caddy no puede emitir los certificados como está configurado.
 
 ## 3. Reverse proxy compartido (Caddy)
 

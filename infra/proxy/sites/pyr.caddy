@@ -24,3 +24,8 @@ dev.trivia.example.com {
 	header X-Robots-Tag "noindex, nofollow"
 	reverse_proxy pyr-dev-web:3000
 }
+
+# Opcional: www → dominio principal (el nombre www tiene que apuntar a la VPS)
+# www.trivia.example.com {
+# 	redir https://trivia.example.com{uri} permanent
+# }

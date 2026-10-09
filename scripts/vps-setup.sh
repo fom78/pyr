@@ -7,6 +7,8 @@
 #   ssh root@IP
 #   bash vps-setup.sh
 #
+# Para cambiar los dominios después (ej. de sslip.io/nip.io a uno propio): scripts/vps-domain.sh
+#
 # Hace:
 #   1. Actualiza el sistema e instala lo básico (ufw, fail2ban, actualizaciones automáticas)
 #   2. Swap si hay poca RAM
@@ -252,6 +254,11 @@ $DEV_DOMAIN {
 	reverse_proxy pyr-dev-web:3000
 }
 EOF
+  # www.<prod> → <prod>, solo si ese nombre ya apunta a esta VPS (si no, Caddy no podría sacar su certificado)
+  MY_IP=$(curl -fsS -4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
+  if [ "${PROD_DOMAIN#www.}" = "$PROD_DOMAIN" ] && [ "$(dig +short A "www.$PROD_DOMAIN" | tail -1)" = "$MY_IP" ]; then
+    printf '\nwww.%s {\n\tredir https://%s{uri} permanent\n}\n' "$PROD_DOMAIN" "$PROD_DOMAIN" >>/opt/proxy/sites/pyr.caddy
+  fi
   info "sites/pyr.caddy creado para $PROD_DOMAIN y $DEV_DOMAIN."
 else
   info "sites/pyr.caddy ya existía (no se modifica)."

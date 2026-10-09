@@ -70,7 +70,7 @@ ssh deploy@IP
 bash vps-domain.sh midominio.com.ar            # staging queda en dev.midominio.com.ar
 ```
 
-Verifica que los nombres apunten a la VPS, reescribe `sites/pyr.caddy` (si `www.` también apunta, lo redirige al dominio principal), actualiza `APP_URL`/`BETTER_AUTH_URL` de prod y dev, recarga Caddy y recrea `web`/`worker` de los entornos que estén corriendo. Guarda copia de lo anterior en `/opt/pyr/domain-backups/`.
+Verifica que los nombres apunten a la VPS, reescribe `sites/pyr.caddy` (si `www.` también apunta, lo redirige al dominio principal), actualiza `APP_URL`/`BETTER_AUTH_URL` de prod y dev, recarga Caddy y recrea `web`/`worker` de los entornos que estén corriendo. Guarda copia de lo anterior en `~/pyr-domain-backups/`.
 
 ## 2. DNS
 

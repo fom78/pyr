@@ -10,7 +10,7 @@
 #
 # - Antes de tocar nada verifica que los dominios apunten a esta VPS.
 # - Si www.<dominio de prod> también apunta acá, agrega la redirección www → sin www.
-# - Guarda copia de lo que modifica en /opt/pyr/domain-backups/<fecha>; si Caddy
+# - Guarda copia de lo que modifica en ~/pyr-domain-backups/<fecha>; si Caddy
 #   rechaza la configuración nueva, vuelve a la anterior.
 # Correr como deploy (o root).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ else
 fi
 
 # ── Copia de seguridad ──────────────────────────────────────────────────────
-BK=/opt/pyr/domain-backups/$(date +%Y%m%d-%H%M%S)
+BK=$HOME/pyr-domain-backups/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$BK"
 cp -p "$SITE" "$BK/pyr.caddy"
 for env in prod dev; do

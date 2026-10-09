@@ -137,7 +137,9 @@ usermod -aG docker "$DEPLOY_USER"
 
 # ── 5. Firewall ─────────────────────────────────────────────────────────────
 step "5. Firewall"
-SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port / {print $2; exit}'); SSH_PORT=${SSH_PORT:-22}
+# Ubuntu 24.04 activa SSH por socket: /run/sshd puede no existir y "sshd -T" falla sin él
+mkdir -p /run/sshd
+SSH_PORT=$( (sshd -T 2>/dev/null || true) | awk '/^port / {print $2; exit}'); SSH_PORT=${SSH_PORT:-22}
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
 ufw allow "$SSH_PORT/tcp" comment 'SSH' >/dev/null
@@ -157,8 +159,10 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 MaxAuthTries 4
 EOF
+  mkdir -p /run/sshd
   if sshd -t; then
-    systemctl reload ssh 2>/dev/null || systemctl reload sshd
+    # try-reload: no falla si el servicio está inactivo (activación por socket); aplica a las conexiones nuevas
+    systemctl try-reload-or-restart ssh 2>/dev/null || systemctl try-reload-or-restart sshd 2>/dev/null || true
     info "Contraseñas desactivadas: solo se entra con clave SSH."
   else
     rm -f /etc/ssh/sshd_config.d/99-hardening.conf

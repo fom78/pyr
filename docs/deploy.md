@@ -15,6 +15,20 @@ Internet ─► Caddy (stack "proxy", puertos 80/443, HTTPS automático)
 
 ## 1. Preparar la VPS (una sola vez)
 
+### Opción rápida: script
+
+`scripts/vps-setup.sh` hace los pasos 1, 3 y 4 de esta guía (usuario, Docker, firewall, SSH, swap, Caddy, `.env` de prod y dev con secretos al azar, clave para GitHub Actions y login en GHCR). Es idempotente: se puede volver a correr sin pisar nada.
+
+```bash
+scp scripts/vps-setup.sh root@IP:/root/
+ssh root@IP
+bash vps-setup.sh        # pregunta dominios, email y token; al final muestra lo que hay que cargar en GitHub
+```
+
+Requisito: haber cargado tu clave SSH pública al crear la VPS (si no, el script no desactiva las contraseñas para no dejarte afuera). Las contraseñas iniciales del admin quedan en `/root/pyr-credenciales.txt` y el detalle de lo que hizo en `/var/log/pyr-vps-setup.log`.
+
+### Opción manual
+
 Probado con Ubuntu 24.04 / Debian 12. Como root:
 
 ```bash

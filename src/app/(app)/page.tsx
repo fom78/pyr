@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowDown, ArrowUp, Flame, Heart, Play, Plus, Trophy } from "lucide-react";
+import { Heart, Play, Plus, Trophy } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
 import { getHomeData } from "@/server/player/queries";
 import { getSettings } from "@/server/config/service";
 import { EmptyState, HelpTip } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDate, formatDateTime, formatNumber, fromNow } from "@/lib/format";
+import { MemberStats } from "@/components/game/category-card";
+import { formatDate, formatDateTime, fromNow } from "@/lib/format";
 
 export default async function HomePage() {
   const user = await requireUser();
@@ -68,7 +69,7 @@ export default async function HomePage() {
       <section className="grid gap-3">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">
-            Mis categorías{" "}
+            Mi liga{" "}
             <HelpTip>
               Tenés {s["lives.max"]} vidas: podés participar en hasta {s["lives.max"]} categorías a la vez.
             </HelpTip>
@@ -92,7 +93,6 @@ export default async function HomePage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data.memberships.map((m) => {
-              const st = m.standing;
               const pendingHere = data.pending.filter((q) => q.categoryId === m.categoryId && !q.tournamentId).length;
               return (
                 <Link key={m.id} href={`/categorias/${m.category.slug}`} className="block">
@@ -111,32 +111,7 @@ export default async function HomePage() {
                       {m.effective === "LEAVING" ? (
                         <p className="text-sm text-muted-foreground">En desvinculación hasta el {formatDate(m.lifeReleasesAt!, tz)}</p>
                       ) : (
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          <div>
-                            <p className="flex items-center justify-center gap-0.5 text-lg font-bold tabular-nums">
-                              {st ? `#${st.rank}` : "–"}
-                              {st?.previousRank && st.previousRank > st.rank && <ArrowUp className="size-3.5 text-success" />}
-                              {st?.previousRank && st.previousRank < st.rank && <ArrowDown className="size-3.5 text-destructive" />}
-                            </p>
-                            <p className="text-xs text-muted-foreground">posición</p>
-                          </div>
-                          <div>
-                            <p className="text-lg font-bold tabular-nums">{st ? formatNumber(st.points) : 0}</p>
-                            <p className="text-xs text-muted-foreground">puntos</p>
-                            {m.pendingPoints > 0 && (
-                              <p className="text-[11px] font-medium text-primary" title="Entran a la tabla cuando cierre el cuestionario">
-                                +{formatNumber(m.pendingPoints)} pend.
-                              </p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="flex items-center justify-center gap-0.5 text-lg font-bold tabular-nums">
-                              <Flame className="size-4 text-warning" />
-                              {m.streak?.current ?? 0}
-                            </p>
-                            <p className="text-xs text-muted-foreground">racha</p>
-                          </div>
-                        </div>
+                        <MemberStats standing={m.standing} streak={m.streak?.current ?? 0} />
                       )}
                     </CardContent>
                   </Card>

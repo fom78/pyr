@@ -3,6 +3,7 @@ import { getCategorySettings } from "@/server/config/service";
 import { activeBanWhere } from "@/server/users/bans";
 import { computeLeagueStandings, computeTournamentStandings, type StandingRow } from "./compute";
 import { logger } from "@/server/logger";
+import { compareResults } from "@/server/scoring/scoring";
 
 const DAY = 86_400_000;
 const FINISHED = ["FINISHED", "TIMED_OUT"] as const;
@@ -21,27 +22,58 @@ function withTrend(rows: StandingRow[], prev: Map<string, { rank: number; previo
   });
 }
 
+/** Cuestionarios de liga que suman hoy: vigentes o cerrados computables, con cierre dentro de la ventana. */
+export function countedLeagueQuizzes(categoryId: string, windowDays: number, now: Date, db: Db = prisma) {
+  return db.quiz.findMany({
+    where: {
+      categoryId,
+      tournamentId: null,
+      publishedAt: { not: null },
+      opensAt: { lte: now },
+      closesAt: { gte: new Date(now.getTime() - windowDays * DAY) },
+      expiresAt: { gt: now },
+    },
+    select: { id: true },
+  });
+}
+
 /**
- * Tabla de una categoría: mejores K de cada usuario entre los cuestionarios de liga computables
- * (CLOSED, no EXPIRED) cerrados dentro de la ventana. Solo inscriptos activos y no baneados.
+ * Impacto de un intento de liga en la tabla: puesto actual del usuario y si ese puntaje
+ * quedó entre sus K mejores.
+ */
+export async function leagueImpact(attempt: { id: string; userId: string }, categoryId: string, now = new Date(), db: Db = prisma) {
+  const category = await db.category.findUnique({ where: { id: categoryId } });
+  if (!category) return null;
+  const s = await getCategorySettings(category, db);
+  const [standing, quizzes] = await Promise.all([
+    db.categoryStanding.findUnique({ where: { categoryId_userId: { categoryId, userId: attempt.userId } } }),
+    countedLeagueQuizzes(categoryId, s["ranking.windowDays"], now, db),
+  ]);
+  const mine = await db.attempt.findMany({
+    where: { userId: attempt.userId, quizId: { in: quizzes.map((q) => q.id) }, status: { in: [...FINISHED] } },
+    select: { id: true, score: true, correctCount: true, totalTimeMs: true, finishedAt: true },
+  });
+  const best = mine.sort(compareResults).slice(0, s["ranking.bestK"]);
+  return {
+    standing,
+    bestK: s["ranking.bestK"],
+    counts: best.some((a) => a.id === attempt.id),
+    participants: await db.categoryStanding.count({ where: { categoryId } }),
+  };
+}
+
+/**
+ * Tabla de una categoría: mejores K de cada usuario entre los cuestionarios de liga vigentes o cerrados
+ * computables (ACTIVE / CLOSED, no EXPIRED) dentro de la ventana. Solo inscriptos activos y no baneados.
+ * Se recalcula al terminar cada intento, así el puntaje se ve en la tabla al instante.
  */
 export async function recomputeCategoryStandings(categoryId: string, now = new Date(), db: Db = prisma) {
   const category = await db.category.findUnique({ where: { id: categoryId } });
   if (!category) return;
   const s = await getCategorySettings(category, db);
-  const windowStart = new Date(now.getTime() - s["ranking.windowDays"] * DAY);
 
   const [quizzes, members, banned] = await Promise.all([
-    db.quiz.findMany({
-      where: {
-        categoryId,
-        tournamentId: null,
-        publishedAt: { not: null },
-        closesAt: { lte: now, gte: windowStart },
-        expiresAt: { gt: now },
-      },
-      select: { id: true },
-    }),
+    countedLeagueQuizzes(categoryId, s["ranking.windowDays"], now, db),
     db.categoryMembership.findMany({ where: { categoryId, status: "ACTIVE" }, select: { userId: true } }),
     bannedUserIds(now, db),
   ]);

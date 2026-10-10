@@ -24,7 +24,7 @@ Next.js 16 (App Router, `src/`), TypeScript, Prisma 7 + PostgreSQL 17, Better Au
 Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderador123!`, `ana` `beto` `caro` `dani` `eli` / `Jugador123!` (eli está baneado).
 
 ## Estructura
-- `src/app/(auth)` ingreso/registro · `src/app/(app)` pantallas del jugador · `src/app/admin` panel · `src/app/api` route handlers (juego, archivos, auth, health).
+- `src/app/(auth)` ingreso/registro · `src/app/(app)` pantallas del jugador (en la UI el modo por categorías se llama **Liga**; la URL sigue siendo `/categorias`) · `src/app/admin` panel · `src/app/api` route handlers (juego, archivos, auth, health).
 - `src/server/**` lógica de dominio. Las páginas y actions llaman a servicios; **no** escriben consultas Prisma complejas inline.
   - Funciones **puras** (testeadas en `tests/unit`): `quiz/status.ts`, `scoring/scoring.ts`, `ranking/compute.ts`, `wildcards/strategies.ts`, `league/lives.ts`, `auth/permissions.ts`.
   - Servicios con DB: `credits/service.ts` (ledger), `ranking/service.ts`, `config/service.ts`, etc. Aceptan un parámetro `db: Db` (cliente o transacción).
@@ -37,7 +37,7 @@ Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderad
 - **Estado de cuestionarios**: fuente de verdad `getQuizStatus(quiz, now)` (derivado de fechas). La columna `Quiz.status` es un caché que sincroniza el worker.
 - **Puntaje**: snapshot `{ base, timeBonus, wrongPenalty }` guardado en `Quiz.scoring` al publicar; cambiar la config global no altera quizzes publicados salvo "recalcular".
 - **Créditos**: solo vía `postTransaction` (lock por usuario, idempotencia por `idempotencyKey`, sin negativos). Saldo = suma de movimientos APPROVED.
-- **Rankings**: tablas materializadas `CategoryStanding` / `TournamentStanding`, recalculadas por eventos y por el worker (la ventana se desliza). Cálculo en TS (`ranking/compute.ts`).
+- **Rankings**: tablas materializadas `CategoryStanding` / `TournamentStanding`, recalculadas al terminar cada intento, por eventos y por el worker (la ventana se desliza). Cálculo en TS (`ranking/compute.ts`).
 - **Errores de usuario**: lanzar `UserError("mensaje en español")`; las actions devuelven `FormState` vía `toFormState`.
 - **Fechas**: en DB en UTC; mostrar con `src/lib/format.ts` en la zona del usuario (default `America/Argentina/Buenos_Aires`).
 - **Imágenes**: `processAndStoreImage` (sharp → WebP) + `StorageAdapter` (local o S3). En la DB se guardan *keys*, nunca URLs (salvo avatares externos de Google).
@@ -55,14 +55,15 @@ Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderad
 - `prisma migrate reset` está bloqueado para agentes de IA sin consentimiento explícito del usuario: no usarlo sin pedir permiso.
 
 ## Decisiones de reglas ante ambigüedades
-- La ventana del ranking se evalúa sobre `closesAt`; un quiz EXPIRED nunca computa.
+- La tabla de liga cuenta cuestionarios **vigentes y cerrados computables** (`isComputable`), con `closesAt` dentro de la ventana; un quiz EXPIRED nunca computa. Se recalcula al terminar cada intento (`finalizeAttempt`), así el jugador ve su puesto al instante. Si el volumen crece, agrupar esos recálculos en un job pg-boss con `singletonKey` por categoría.
 - Pregunta anulada: no suma ni resta para nadie y su tiempo no cuenta.
 - Abandonar una categoría: pasa a LEAVING (no juega ni figura en tabla, ocupa vida) por `league.leaveCooldownDays`; no puede volver hasta `max(leaveCooldownDays, rejoinBlockDays)` desde que pidió salir. No se puede cancelar la salida.
 - Cuestionarios de torneo no cuentan para la liga de la categoría.
 - Doble total no duplica un puntaje negativo.
 - Usuario baneado: se borran sus sesiones, se cierran sus intentos en curso y sale de las tablas al instante (y vuelve al levantar el baneo). No puede iniciar sesión mientras dure.
 - Modo "tiempo por pregunta": cada pregunta vence a su hora; el intento además tiene un límite global (Σ tiempos + `game.attemptGraceSec`). Pausar *entre* preguntas no da ventaja porque la siguiente no se conoce hasta servirse.
-- Las respuestas de un intento solo dicen "registrado"; la corrección se ve al cerrar el cuestionario (`review.revealAnswers`).
+- Las respuestas de un intento solo dicen "registrado"; la corrección se ve al cerrar el cuestionario (`review.revealAnswers`). El puntaje y el puesto sí se ven al terminar.
+- Triple sorpresa: las preguntas se sortean al empezar el intento y se anuncian recién al servir cada una (`WildcardStrategy.announce`); nunca se revelan las siguientes.
 - Racha: cuestionarios de liga consecutivos de una categoría (por fecha de apertura) jugados sin saltear; cada `credits.streakLength` paga `credits.streakBonus`.
 - Torneo: los empates en un puesto premiado cobran el premio completo de ese puesto. El costo no se puede cambiar con inscriptos.
 - Corregir la respuesta correcta de una pregunta bloqueada está permitido (es la vía para errores) y recalcula todos los cuestionarios que la usan; queda en auditoría.

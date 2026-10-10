@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { CheckCircle2, CircleSlash, Clock, Lock, Trophy, XCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, CheckCircle2, CircleSlash, Clock, Lock, Trophy, XCircle } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
 import { getAttemptResult } from "@/server/game/results";
 import { PageHeader } from "@/components/common";
@@ -54,27 +54,19 @@ export default async function ResultPage({ params }: { params: Promise<{ attempt
         Posición <strong>en este cuestionario</strong>: {r.position}° de {r.participants}
         {r.status === "ACTIVE" && " (puede cambiar mientras siga abierto)"}.
       </p>
-      <p className="mb-4 flex gap-2 rounded-md border bg-muted/40 p-3 text-sm">
-        <Trophy className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-        <span>
-          {quiz.tournament ? (
-            <>Estos puntos ya suman en la tabla del torneo.</>
-          ) : r.status === "ACTIVE" ? (
-            <>
-              Estos puntos entran en la tabla de {quiz.category!.name} cuando cierre el cuestionario (
-              <strong>{formatDateTime(quiz.closesAt, user.timezone)}</strong>). Hasta entonces la tabla no se mueve, para que nadie saque ventaja
-              por jugar antes.
-            </>
-          ) : r.status === "CLOSED" ? (
-            <>Este cuestionario ya cerró y suma para la tabla de {quiz.category!.name}.</>
-          ) : (
-            <>Este cuestionario ya no suma para la tabla (pasó a historial).</>
-          )}{" "}
-          <Link href={`${back.href}?tab=tabla`} className="font-medium text-primary underline-offset-4 hover:underline">
-            Ver tabla
-          </Link>
-        </span>
-      </p>
+      {quiz.tournament ? (
+        <p className="mb-4 flex gap-2 rounded-md border bg-muted/40 p-3 text-sm">
+          <Trophy className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span>
+            Estos puntos ya suman en la tabla del torneo.{" "}
+            <Link href={`${back.href}?tab=tabla`} className="font-medium text-primary underline-offset-4 hover:underline">
+              Ver tabla
+            </Link>
+          </span>
+        </p>
+      ) : (
+        <LeagueImpact r={r} slug={quiz.category!.slug} categoryName={quiz.category!.name} />
+      )}
       {r.wildcard && (
         <p className="mb-4 rounded-md bg-warning/15 p-3 text-sm">
           🃏 Usaste <strong>{r.wildcard.name}</strong>. {r.wildcard.reveal}
@@ -130,6 +122,59 @@ export default async function ResultPage({ params }: { params: Promise<{ attempt
           <Link href="/">Inicio</Link>
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** Cómo quedó el usuario en la tabla de la liga después de este cuestionario. */
+function LeagueImpact({
+  r,
+  slug,
+  categoryName,
+}: {
+  r: NonNullable<Awaited<ReturnType<typeof getAttemptResult>>>;
+  slug: string;
+  categoryName: string;
+}) {
+  const st = r.league?.standing;
+  const moved = st?.previousRank ? st.previousRank - st.rank : 0;
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+      <Trophy className="size-6 shrink-0 text-warning" aria-hidden />
+      <div className="grid min-w-0 flex-1 gap-0.5">
+        {st ? (
+          <>
+            <p>
+              Tu puesto en la liga de {categoryName}: <strong className="text-base tabular-nums">#{st.rank}</strong>{" "}
+              <span className="text-muted-foreground">de {r.league!.participants}</span>
+              {moved > 0 && (
+                <span className="ml-1 inline-flex items-center font-medium text-success">
+                  <ArrowUp className="size-3.5" aria-hidden />
+                  subiste {moved}
+                </span>
+              )}
+              {moved < 0 && (
+                <span className="ml-1 inline-flex items-center font-medium text-destructive">
+                  <ArrowDown className="size-3.5" aria-hidden />
+                  bajaste {-moved}
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {r.league!.counts
+                ? `Este puntaje ya suma: está entre tus ${r.league!.bestK} mejores (${formatNumber(st.points)} pts en total).`
+                : `Este puntaje no mejoró tus ${r.league!.bestK} mejores, así que tu total sigue en ${formatNumber(st.points)} pts.`}
+            </p>
+          </>
+        ) : r.status === "EXPIRED" ? (
+          <p>Este cuestionario ya no suma para la tabla (pasó a historial).</p>
+        ) : (
+          <p>Todavía no figurás en la tabla de {categoryName}.</p>
+        )}
+      </div>
+      <Button asChild size="sm" variant="outline">
+        <Link href={`/categorias/${slug}/tabla`}>Ver tabla</Link>
+      </Button>
     </div>
   );
 }

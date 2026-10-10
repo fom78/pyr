@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@/server/db";
 import { finalizeAttempt, getCurrent, startAttempt, submitAnswer, expireStaleAttempts, recalculateQuizAttempts } from "@/server/game/engine";
 import { getBalance } from "@/server/credits/service";
+import { leagueImpact } from "@/server/ranking/service";
 import { hasDb, makeCategory, makeQuestions, makeUser, resetDb } from "./helpers";
 
 const T0 = new Date("2026-05-10T12:00:00Z");
@@ -114,6 +115,35 @@ describe.skipIf(!hasDb)("motor de juego", () => {
     expect(done.totalTimeMs).toBe(30_000);
     expect(await getBalance(user.id)).toBe(2); // completado (+2); 66% < 80% sin extra
     expect((await getCurrent(a.id, user.id, at(t))).status).toBe("FINISHED");
+  });
+
+  it("la tabla de la liga se actualiza al terminar, aunque el cuestionario siga vigente", async () => {
+    const { cat, user, quiz, correctOf, wrongOf } = await setup();
+    const play = async (userId: string, correct: number) => {
+      const a = await startAttempt(userId, quiz.id, { now: T0 });
+      for (let i = 0; i < 3; i++) {
+        const cur = await getCurrent(a.id, userId, at(i * 1000));
+        if (cur.status !== "PLAYING") throw new Error();
+        await submitAnswer(a.id, userId, { index: i, optionId: i < correct ? correctOf(cur.question.text) : wrongOf(cur.question.text) }, at(i * 1000));
+      }
+      return prisma.attempt.findUniqueOrThrow({ where: { id: a.id } });
+    };
+    // Primer cuestionario de un jugador nuevo: entra a la tabla al instante
+    const first = await play(user.id, 1);
+    const s1 = await prisma.categoryStanding.findUniqueOrThrow({ where: { categoryId_userId: { categoryId: cat.id, userId: user.id } } });
+    expect(s1).toMatchObject({ rank: 1, points: first.score, quizzesCounted: 1 });
+
+    // Otro jugador lo supera: el primero baja al 2.º con tendencia
+    const other = await makeUser();
+    await prisma.categoryMembership.create({ data: { userId: other.id, categoryId: cat.id } });
+    await play(other.id, 3);
+    const rows = await prisma.categoryStanding.findMany({ where: { categoryId: cat.id }, orderBy: { rank: "asc" } });
+    expect(rows.map((r) => r.userId)).toEqual([other.id, user.id]);
+    expect(rows[1].previousRank).toBe(1);
+
+    const impact = await leagueImpact({ id: first.id, userId: user.id }, cat.id, T0);
+    expect(impact).toMatchObject({ counts: true, participants: 2 });
+    expect(impact?.standing?.rank).toBe(2);
   });
 
   it("el job cierra intentos abandonados y las no respondidas cuentan como incorrectas", async () => {

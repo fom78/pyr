@@ -1,4 +1,4 @@
-import { compareResults } from "@/server/scoring/scoring";
+import { compareResults, type RankableResult } from "@/server/scoring/scoring";
 
 export type AttemptResult = {
   userId: string;
@@ -78,4 +78,16 @@ export function computeTournamentStandings(results: AttemptResult[]): StandingRo
   const rows: StandingRow[] = [];
   for (const [userId, list] of groupByUser(results)) rows.push(aggregate(userId, list));
   return assignRanks(rows);
+}
+
+/** Corte de una tabla ordenada alrededor de un usuario: hasta `around` filas arriba y abajo. */
+export function sliceAround<T extends { userId: string }>(rows: T[], userId: string, around = 2): T[] {
+  const i = rows.findIndex((r) => r.userId === userId);
+  if (i < 0) return [];
+  return rows.slice(Math.max(0, i - around), i + around + 1);
+}
+
+/** Puesto de un resultado dentro de un cuestionario (competición: empates comparten puesto). */
+export function positionOf(mine: RankableResult, all: RankableResult[]): number {
+  return 1 + all.filter((r) => compareResults(r, mine) < 0).length;
 }

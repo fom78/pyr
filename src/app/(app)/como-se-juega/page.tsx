@@ -83,11 +83,12 @@ export default async function HowToPlayPage() {
                 <strong>Próximamente</strong>: ya está anunciado, todavía no se puede jugar.
               </li>
               <li>
-                <strong>Vigente</strong>: se puede jugar (habitualmente {r.activeDays} días). <strong>Tenés un solo intento.</strong>
+                <strong>Vigente</strong>: se puede jugar (habitualmente {r.activeDays} días). <strong>Tenés un solo intento.</strong> Apenas lo
+                terminás, tu puntaje <strong>ya suma para la tabla</strong>.
               </li>
               <li>
-                <strong>Cerrado</strong>: ya no se juega, se ven los resultados y <strong>suma para la tabla</strong> (es “computable”) durante{" "}
-                {r.computableDays} días.
+                <strong>Cerrado</strong>: ya no se juega, se ven las respuestas correctas y <strong>sigue sumando para la tabla</strong> (es
+                “computable”) durante {r.computableDays} días.
               </li>
               <li>
                 <strong>Historial</strong>: queda para consultar, pero ya no suma.
@@ -121,9 +122,10 @@ export default async function HowToPlayPage() {
           </Section>
           <Section title={`🏅 La tabla: tus mejores ${r.bestK}`}>
             <p>
-              En la tabla de cada categoría se suman tus <strong>{r.bestK} mejores puntajes</strong> entre los cuestionarios computables cerrados
-              en los últimos {r.windowDays} días. Por ejemplo: si jugaste 14 cuestionarios en el último mes y 2 ya no son computables, se toman
-              los {r.bestK} mejores de los 12 restantes. Un mal día no te arruina la tabla, y siempre hay revancha.
+              En la tabla de cada categoría se suman tus <strong>{r.bestK} mejores puntajes</strong> entre los cuestionarios vigentes y los
+              cerrados computables de los últimos {r.windowDays} días. La tabla se actualiza <strong>al instante</strong>: apenas terminás un
+              cuestionario ves tu nuevo puesto. Por ejemplo: si jugaste 14 cuestionarios en el último mes y 2 ya no son computables, se toman los{" "}
+              {r.bestK} mejores de los 12 restantes. Un mal día no te arruina la tabla, y siempre hay revancha.
             </p>
           </Section>
           <Section title="📱 Si se cierra la app a mitad de un cuestionario">

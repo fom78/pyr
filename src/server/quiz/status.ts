@@ -24,8 +24,10 @@ export function isPlayable(q: QuizTiming, now = new Date()) {
   return getQuizStatus(q, now) === "ACTIVE";
 }
 
+/** Suma para la tabla de liga: vigente (se actualiza al terminar cada intento) o cerrado computable. */
 export function isComputable(q: QuizTiming, now = new Date()) {
-  return getQuizStatus(q, now) === "CLOSED";
+  const st = getQuizStatus(q, now);
+  return st === "ACTIVE" || st === "CLOSED";
 }
 
 /** Errores de validación de fechas (vacío = ok). `within` = vigencia del torneo. */

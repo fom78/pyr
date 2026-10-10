@@ -13,6 +13,9 @@ export type WildcardInitContext = {
 
 export type WildcardState = Record<string, unknown>;
 
+/** Aviso que se muestra al servir una pregunta (ej. "esta vale el triple"). */
+export type WildcardAnnouncement = { icon: string; title: string; text: string };
+
 export interface WildcardStrategy {
   type: WildcardType;
   name: string;
@@ -28,6 +31,8 @@ export interface WildcardStrategy {
   finalize: (score: number, state: WildcardState) => number;
   /** Texto que se revela al terminar (ej. qué preguntas eran las sorpresa). */
   reveal: (state: WildcardState) => string | null;
+  /** Aviso al servir la pregunta `index`. Solo se revela la pregunta actual, nunca las siguientes. */
+  announce?: (index: number, state: WildcardState) => WildcardAnnouncement | null;
 }
 
 const doubleTotal: WildcardStrategy = {
@@ -60,7 +65,7 @@ const SURPRISE_COUNT = 2;
 const tripleSurprise: WildcardStrategy = {
   type: "TRIPLE_SURPRISE",
   name: "Triple sorpresa",
-  description: `El sistema elige en secreto ${SURPRISE_COUNT} preguntas: si las respondés bien, valen el triple. Se revelan al terminar.`,
+  description: `El sistema sortea ${SURPRISE_COUNT} preguntas: si las respondés bien, valen el triple. Te avisamos justo cuando te toca una.`,
   example: (s) =>
     `Si una de las preguntas sorpresa la acertás con ${s.base} + ${Math.round(s.timeBonus / 2)} de bonus, suma ${(s.base + Math.round(s.timeBonus / 2)) * 3}.`,
   init: ({ questionCount, randomInt }) => {
@@ -80,6 +85,10 @@ const tripleSurprise: WildcardStrategy = {
     const idx = (state.indexes as number[] | undefined) ?? [];
     return idx.length ? `Preguntas sorpresa: ${idx.map((i) => `#${i + 1}`).join(" y ")}` : null;
   },
+  announce: (index, state) =>
+    (state.indexes as number[] | undefined)?.includes(index)
+      ? { icon: "🃏", title: "¡Pregunta sorpresa!", text: "Si acertás, vale el triple." }
+      : null,
 };
 
 export const wildcardStrategies: Record<WildcardType, WildcardStrategy> = {

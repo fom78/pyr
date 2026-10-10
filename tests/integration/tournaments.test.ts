@@ -27,7 +27,12 @@ async function makeTournament(over: Partial<{ entryCost: number; maxParticipants
         { rank: 2, credits: 50 },
       ],
       categories: { create: { categoryId: cat.id } },
-      wildcards: { create: [{ type: "DOUBLE_TOTAL", quantity: 1 }] },
+      wildcards: {
+        create: [
+          { type: "DOUBLE_TOTAL", quantity: 1 },
+          { type: "TRIPLE_SURPRISE", quantity: 1 },
+        ],
+      },
     },
     include: { categories: true },
   });
@@ -77,6 +82,41 @@ describe.skipIf(!hasDb)("torneos", () => {
     await cancelTournament(t.id, "falta de quórum", admin);
     await cancelTournament(t.id, "x", admin).catch(() => {});
     expect(await getBalance(u.id)).toBe(100);
+  });
+
+  it("triple sorpresa: anuncia solo las preguntas sorteadas, recién cuando se sirven", async () => {
+    const t = await makeTournament();
+    const qs = await makeQuestions(t.categories[0].categoryId, 5);
+    const quiz = await prisma.quiz.create({
+      data: {
+        title: "Fecha sorpresa",
+        tournamentId: t.id,
+        publishedAt: at(-DAY),
+        opensAt: at(-3600_000),
+        closesAt: at(DAY),
+        expiresAt: t.endsAt,
+        shuffleQuestions: false,
+        scoring: { base: 100, timeBonus: 0, wrongPenalty: 0 },
+        questions: { create: qs.map((q, i) => ({ questionId: q.id, position: i })) },
+      },
+    });
+    const u = await richUser();
+    await enrollInTournament(u.id, t.id);
+    const att = await startAttempt(u.id, quiz.id, { wildcard: "TRIPLE_SURPRISE" });
+    const use = await prisma.wildcardUse.findFirstOrThrow({ where: { attemptId: att.id } });
+    const announced: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const cur = await getCurrent(att.id, u.id);
+      if (cur.status !== "PLAYING") throw new Error();
+      // nunca filtra el sorteo completo
+      expect(JSON.stringify(cur)).not.toMatch(/indexes/);
+      if (cur.announce) announced.push(cur.index);
+      const q = qs.find((x) => x.text === cur.question.text)!;
+      await submitAnswer(att.id, u.id, { index: i, optionId: q.options.find((o) => o.isCorrect)!.id });
+    }
+    expect(announced).toEqual((use.state as { indexes: number[] }).indexes);
+    // 5 aciertos de 100, dos de ellos triples
+    expect((await prisma.attempt.findUniqueOrThrow({ where: { id: att.id } })).score).toBe(300 + 600);
   });
 
   it("el comodín se aplica y se gasta; al terminar el torneo se pagan premios", async () => {

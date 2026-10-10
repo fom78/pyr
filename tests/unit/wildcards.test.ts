@@ -51,6 +51,14 @@ describe("comodines", () => {
     }
   });
 
+  it("triple sorpresa anuncia solo las preguntas sorteadas", () => {
+    const st = getStrategy("TRIPLE_SURPRISE");
+    const state = { indexes: [1, 3] };
+    expect([0, 1, 2, 3, 4].map((i) => Boolean(st.announce?.(i, state)))).toEqual([false, true, false, true, false]);
+    expect(st.announce?.(1, state)?.text).toMatch(/triple/);
+    expect(getStrategy("DOUBLE_TOTAL").announce).toBeUndefined();
+  });
+
   it("triple sorpresa con 1 sola pregunta elige 1", () => {
     const st = getStrategy("TRIPLE_SURPRISE");
     expect((st.init({ questionCount: 1, randomInt: () => 0 }).indexes as number[]).length).toBe(1);

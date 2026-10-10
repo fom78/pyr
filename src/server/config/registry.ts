@@ -62,7 +62,7 @@ export const settingsRegistry = {
     schema: int(1, 365),
     default: 30,
     label: "Ventana del ranking",
-    help: "Solo cuentan los cuestionarios cerrados dentro de esta cantidad de días.",
+    help: "Cuentan los cuestionarios vigentes y los cerrados computables cuyo cierre cae dentro de esta cantidad de días.",
     group: "Liga",
     categoryOverride: true,
     unit: "días",

@@ -15,7 +15,7 @@ export const defaultRulesTexts: Record<RulesSection, string> = {
   intro:
     "PyR es una competencia de preguntas y respuestas. Elegís tus categorías favoritas, respondés cuestionarios a contrarreloj y competís en tablas de posiciones. También podés anotarte en torneos especiales.",
   league:
-    "En cada categoría se publican cuestionarios cada pocos días. Cada uno se puede jugar una sola vez mientras está vigente. Tus mejores resultados recientes suman para la tabla de la categoría, así que siempre hay revancha.",
+    "En cada categoría se publican cuestionarios cada pocos días. Cada uno se puede jugar una sola vez mientras está vigente. Apenas terminás uno, tu puntaje se refleja en la tabla de la categoría, donde suman tus mejores resultados recientes: siempre hay revancha.",
   tournament:
     "Los torneos tienen fechas, reglamento y premios propios. Se paga la inscripción con créditos (no gasta vidas) y suman todos los cuestionarios del torneo. Podés usar comodines para multiplicar tus puntos.",
   credits:

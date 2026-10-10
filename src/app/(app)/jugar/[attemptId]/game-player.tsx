@@ -130,7 +130,24 @@ export function GamePlayer({ initial, title, wildcard }: { initial: CurrentQuest
         </p>
       )}
 
-      <div className="grid gap-3">
+      {q.announce && (
+        <div
+          key={q.index}
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-3 rounded-xl border-2 border-warning bg-warning/15 px-4 py-3 shadow-sm motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-75 motion-safe:duration-500"
+        >
+          <span className="text-4xl motion-safe:animate-bounce" aria-hidden>
+            {q.announce.icon}
+          </span>
+          <span className="grid">
+            <strong className="text-lg leading-tight">{q.announce.title}</strong>
+            <span className="text-sm text-muted-foreground">{q.announce.text}</span>
+          </span>
+        </div>
+      )}
+
+      <div className={cn("grid gap-3", q.announce && "rounded-xl ring-2 ring-warning/60 ring-offset-4 ring-offset-background")}>
         {q.question.imageUrl && (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={q.question.imageUrl} alt="Imagen de la pregunta" className="mx-auto max-h-[35dvh] w-auto rounded-lg border object-contain" />

@@ -7,9 +7,9 @@ import { getActiveBan } from "@/server/users/bans";
 import { isActiveMember } from "@/server/league/service";
 import { getQuizStatus } from "@/server/quiz/status";
 import { readScoring, scoreAttempt } from "@/server/scoring/attempt";
-import { getStrategy } from "@/server/wildcards/strategies";
+import { getStrategy, type WildcardAnnouncement, type WildcardState } from "@/server/wildcards/strategies";
 import { grantLeagueRewards } from "@/server/credits/rewards";
-import { recomputeTournamentStandings } from "@/server/ranking/service";
+import { recomputeCategoryStandings, recomputeTournamentStandings } from "@/server/ranking/service";
 import { fileUrl } from "@/server/storage";
 import { logger } from "@/server/logger";
 
@@ -136,12 +136,14 @@ export type CurrentQuestion = {
   limitMs: number;
   question: { type: string; text: string | null; imageUrl: string | null };
   options: { id: string; text: string | null; imageUrl: string | null }[];
+  /** Aviso del comodín para esta pregunta (ej. triple sorpresa). */
+  announce: WildcardAnnouncement | null;
 };
 
 export type AttemptState = CurrentQuestion | { status: "FINISHED"; attemptId: string };
 
 async function loadAttempt(attemptId: string, userId: string) {
-  const attempt = await prisma.attempt.findUnique({ where: { id: attemptId }, include: { quiz: true } });
+  const attempt = await prisma.attempt.findUnique({ where: { id: attemptId }, include: { quiz: true, wildcardUse: true } });
   if (!attempt || attempt.userId !== userId) throw new NotFoundError("Intento");
   return attempt;
 }
@@ -230,6 +232,9 @@ export async function getCurrent(attemptId: string, userId: string, now = new Da
         const o = byId.get(id)!;
         return { id: o.id, text: o.text, imageUrl: fileUrl(o.imageKey) };
       }),
+      announce: attempt.wildcardUse
+        ? (getStrategy(attempt.wildcardUse.type).announce?.(index, attempt.wildcardUse.state as WildcardState) ?? null)
+        : null,
     };
   }
   throw new Error("getCurrent: demasiadas iteraciones");
@@ -367,9 +372,15 @@ export async function finalizeAttempt(attemptId: string, now = new Date()) {
       );
       await prisma.attempt.update({ where: { id: attemptId }, data: { rewardsGiven: true } });
     }
-    if (attempt.quiz.tournamentId) await recomputeTournamentStandings(attempt.quiz.tournamentId, now);
   } catch (err) {
-    logger.error({ err, attemptId }, "error post-cierre de intento");
+    logger.error({ err, attemptId }, "error al otorgar recompensas del intento");
+  }
+  try {
+    // La tabla se actualiza al instante (liga y torneo)
+    if (attempt.quiz.tournamentId) await recomputeTournamentStandings(attempt.quiz.tournamentId, now);
+    else if (attempt.quiz.categoryId) await recomputeCategoryStandings(attempt.quiz.categoryId, now);
+  } catch (err) {
+    logger.error({ err, attemptId }, "error al recalcular la tabla tras el intento");
   }
 }
 

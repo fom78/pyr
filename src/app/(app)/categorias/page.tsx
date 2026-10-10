@@ -1,39 +1,37 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Heart } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
-import { prisma } from "@/server/db";
-import { getLivesSummary } from "@/server/league/service";
+import { getLeagueOverview } from "@/server/player/queries";
 import { getSettings } from "@/server/config/service";
-import { checkJoin } from "@/server/league/lives";
 import { HelpTip, PageHeader } from "@/components/common";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { JoinButton } from "@/components/game/membership-buttons";
-import { formatDate } from "@/lib/format";
+import { CategoryCard } from "@/components/game/category-card";
 
-export const metadata: Metadata = { title: "Categorías" };
+export const metadata: Metadata = { title: "Liga" };
 
-export default async function CategoriesPage() {
+export default async function LeaguePage() {
   const user = await requireUser();
-  const now = new Date();
-  const [categories, lives, s] = await Promise.all([
-    prisma.category.findMany({
-      where: { active: true },
-      orderBy: { name: "asc" },
-      include: { _count: { select: { memberships: { where: { status: "ACTIVE" } } } } },
-    }),
-    getLivesSummary(user.id, now),
-    getSettings(),
-  ]);
+  const [{ items, lives }, s] = await Promise.all([getLeagueOverview(user.id), getSettings()]);
+  const mine = items.filter((i) => i.membership);
+  const others = items.filter((i) => !i.membership);
+  const card = (i: (typeof items)[number]) => (
+    <CategoryCard
+      key={i.category.id}
+      data={i}
+      meId={user.id}
+      tz={user.timezone}
+      canJoin={!user.banned}
+      lives={lives}
+      cooldownDays={s["league.leaveCooldownDays"]}
+    />
+  );
 
   return (
     <>
       <PageHeader
-        title="Categorías"
+        title="Liga"
         description={
           <span className="inline-flex flex-wrap items-center gap-1">
-            Vidas:
+            Elegí tus categorías y competí en cada una. Vidas:
             {Array.from({ length: lives.max }, (_, i) => (
               <Heart key={i} className={i < lives.used ? "size-4 fill-destructive text-destructive" : "size-4 text-muted-foreground"} aria-hidden />
             ))}
@@ -46,48 +44,18 @@ export default async function CategoriesPage() {
           </span>
         }
       />
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {categories.map((c) => {
-          const check = checkJoin(lives.memberships, c.id, lives.max, now);
-          const status = !check.ok ? check.reason : null;
-          return (
-            <Card key={c.id} className="flex flex-col">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <span className="text-2xl" aria-hidden>
-                    {c.icon}
-                  </span>
-                  <Link href={`/categorias/${c.slug}`} className="hover:underline">
-                    {c.name}
-                  </Link>
-                </CardTitle>
-                <CardDescription>{c.description}</CardDescription>
-              </CardHeader>
-              <CardContent className="mt-auto flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs text-muted-foreground">{c._count.memberships} participantes</span>
-                {status === "ALREADY_MEMBER" ? (
-                  <Badge>Participás</Badge>
-                ) : status === "LEAVING" ? (
-                  <Badge variant="secondary">En desvinculación</Badge>
-                ) : status === "REJOIN_BLOCKED" && !check.ok ? (
-                  <Badge variant="outline">Podés volver el {formatDate(check.until!, user.timezone)}</Badge>
-                ) : (
-                  !user.banned && (
-                    <JoinButton
-                      categoryId={c.id}
-                      categoryName={c.name}
-                      livesFree={lives.free}
-                      livesMax={lives.max}
-                      cooldownDays={s["league.leaveCooldownDays"]}
-                      size="sm"
-                    />
-                  )
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      {mine.length > 0 && (
+        <section className="mb-8 grid gap-3">
+          <h2 className="font-semibold">Mis categorías</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{mine.map(card)}</div>
+        </section>
+      )}
+      {others.length > 0 && (
+        <section className="grid gap-3">
+          <h2 className="font-semibold">{mine.length > 0 ? "Otras categorías" : "Categorías"}</h2>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{others.map(card)}</div>
+        </section>
+      )}
     </>
   );
 }

@@ -24,6 +24,8 @@ test("jugar un cuestionario completo, recargando a mitad de camino", async ({ pa
   await expect(page).toHaveURL(/\/resultados\//);
   await expect(page.getByRole("heading", { name: "Revisión" })).toBeVisible();
   await expect(page.getByText(/Las respuestas correctas se muestran cuando cierre/)).toBeVisible();
+  // La tabla de la liga se actualiza al terminar
+  await expect(page.getByText(/Tu puesto en la liga/)).toBeVisible();
 
   // No se puede volver a jugar
   await page.goto("/categorias/futbol");

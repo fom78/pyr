@@ -4,6 +4,7 @@ import { getQuizStatus } from "@/server/quiz/status";
 import { getStrategy } from "@/server/wildcards/strategies";
 import { compareResults } from "@/server/scoring/scoring";
 import { fileUrl } from "@/server/storage";
+import { leagueImpact } from "@/server/ranking/service";
 
 /**
  * Resultado de un intento para su dueño. Las respuestas correctas solo se incluyen si el
@@ -42,9 +43,16 @@ export async function getAttemptResult(attemptId: string, userId: string, now = 
       }
     : null;
 
+  // Liga: la tabla se actualiza al terminar, así que se puede mostrar el impacto real
+  const league =
+    attempt.quiz.categoryId && !attempt.quiz.tournamentId && attempt.status !== "IN_PROGRESS"
+      ? await leagueImpact(attempt, attempt.quiz.categoryId, now)
+      : null;
+
   return {
     attempt,
     quiz: attempt.quiz,
+    league,
     status,
     reveal,
     position,

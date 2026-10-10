@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeLeagueStandings, computeTournamentStandings, type AttemptResult } from "@/server/ranking/compute";
+import { computeLeagueStandings, computeTournamentStandings, positionOf, sliceAround, type AttemptResult } from "@/server/ranking/compute";
 
 const r = (userId: string, quizId: string, score: number, correctCount = 5, totalTimeMs = 10000): AttemptResult => ({
   userId,
@@ -49,5 +49,22 @@ describe("computeTournamentStandings", () => {
     const rows = computeTournamentStandings([r("ana", "q1", 100), r("ana", "q2", 200), r("ana", "q3", 300), r("beto", "q1", 500)]);
     expect(rows[0]).toMatchObject({ userId: "ana", points: 600, quizzesCounted: 3, rank: 1 });
     expect(rows[1]).toMatchObject({ userId: "beto", points: 500, rank: 2 });
+  });
+});
+
+describe("sliceAround / positionOf", () => {
+  const rows = ["a", "b", "c", "d", "e", "f"].map((userId, i) => ({ userId, rank: i + 1 }));
+  it("toma 2 arriba y 2 abajo del usuario (menos en los bordes)", () => {
+    expect(sliceAround(rows, "c").map((r) => r.userId)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(sliceAround(rows, "a").map((r) => r.userId)).toEqual(["a", "b", "c"]);
+    expect(sliceAround(rows, "f").map((r) => r.userId)).toEqual(["d", "e", "f"]);
+    expect(sliceAround(rows, "zz")).toEqual([]);
+  });
+  it("puesto dentro de un cuestionario: los empates comparten puesto", () => {
+    const res = (score: number) => ({ score, correctCount: 1, totalTimeMs: 1000, finishedAt: null });
+    const all = [res(300), res(200), res(200), res(100)];
+    expect(positionOf(all[1], all)).toBe(2);
+    expect(positionOf(all[2], all)).toBe(2);
+    expect(positionOf(all[3], all)).toBe(4);
   });
 });

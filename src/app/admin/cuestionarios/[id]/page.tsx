@@ -7,7 +7,7 @@ import { readScoring } from "@/server/scoring/attempt";
 import { PageHeader } from "@/components/common";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateTime, formatMs, toDateTimeInput } from "@/lib/format";
+import { formatDate, formatDateTime, formatMs, toDateTimeInput } from "@/lib/format";
 import { compareResults } from "@/server/scoring/scoring";
 import { QuizForm } from "../quiz-form";
 import { quizRefOptions } from "../refs";
@@ -15,6 +15,8 @@ import { QuizStatusBadge } from "@/components/game/quiz-status-badge";
 import { QuizActions } from "./quiz-actions";
 import { QuestionPicker } from "./question-picker";
 import { QuizQuestionList } from "./quiz-question-list";
+import { AutoDraftPanel } from "./auto-draft-panel";
+import { getCategorySettings } from "@/server/config/service";
 
 export const metadata = { title: "Cuestionario" };
 
@@ -28,7 +30,21 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
       tournament: true,
       questions: {
         orderBy: { position: "asc" },
-        include: { question: { include: { options: { orderBy: { position: "asc" } }, categories: { include: { category: true } } } } },
+        include: {
+          question: {
+            include: {
+              options: { orderBy: { position: "asc" } },
+              categories: { include: { category: true } },
+              // Último uso en otro cuestionario (para marcar las reutilizadas).
+              quizQuestions: {
+                where: { quizId: { not: id } },
+                select: { quiz: { select: { opensAt: true } } },
+                orderBy: { quiz: { opensAt: "desc" } },
+                take: 1,
+              },
+            },
+          },
+        },
       },
       attempts: { include: { user: { select: { name: true, username: true } } } },
     },
@@ -40,6 +56,8 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
   const tz = user.timezone;
   const scoring = readScoring(quiz.scoring, { base: 100, timeBonus: 50, wrongPenalty: 0 });
   const attempts = [...quiz.attempts].sort((a, b) => compareResults(a, b));
+  const autoDraft = status === "DRAFT" && quiz.scheduleId && quiz.category;
+  const expected = autoDraft ? (await getCategorySettings(quiz.category!))["quiz.questionCount"] : 0;
 
   return (
     <>
@@ -97,6 +115,19 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
           }}
         />
         <div className="grid content-start gap-6">
+          {autoDraft && (
+            <AutoDraftPanel
+              quizId={quiz.id}
+              expected={expected}
+              items={quiz.questions.map((qq) => ({
+                id: qq.id,
+                text: qq.question.text,
+                difficulty: qq.question.difficulty,
+                reused: qq.reused,
+                lastUsed: qq.question.quizQuestions[0] ? formatDate(qq.question.quizQuestions[0].quiz.opensAt, tz, "d/M/yy") : null,
+              }))}
+            />
+          )}
           {status === "DRAFT" ? (
             <QuestionPicker
               quizId={quiz.id}

@@ -53,6 +53,7 @@ model User {
   creditsIssued      CreditTransaction[]  @relation("CreditIssuer")
   quizzesCreated     Quiz[]
   tournamentsCreated Tournament[]
+  notifications      Notification[]
 }
 
 model Session {
@@ -184,6 +185,7 @@ model Category {
   standings   CategoryStanding[]
   streaks     StreakState[]
   tournaments TournamentCategory[]
+  schedule    QuizSchedule?
 }
 
 model Tag {
@@ -308,37 +310,61 @@ enum TimeMode {
 }
 
 model Quiz {
-  id               String     @id @default(cuid())
+  id               String        @id @default(cuid())
   title            String
   description      String?
   categoryId       String?
-  category         Category?  @relation(fields: [categoryId], references: [id])
+  category         Category?     @relation(fields: [categoryId], references: [id])
   tournamentId     String?
-  tournament       Tournament? @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournament       Tournament?   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   // status es un caché sincronizado por el worker; la fuente de verdad es getQuizStatus(quiz, now).
-  status           QuizStatus @default(DRAFT)
+  status           QuizStatus    @default(DRAFT)
   publishedAt      DateTime? // null = DRAFT
   opensAt          DateTime
   closesAt         DateTime
   expiresAt        DateTime // fin del período computable
-  timeMode         TimeMode   @default(PER_QUESTION)
-  timeLimitSec     Int        @default(20) // por pregunta o total según timeMode
-  shuffleQuestions Boolean    @default(true)
-  shuffleOptions   Boolean    @default(true)
-  scoring          Json       @default("{}") // snapshot { base, timeBonus, wrongPenalty } congelado al publicar
+  timeMode         TimeMode      @default(PER_QUESTION)
+  timeLimitSec     Int           @default(20) // por pregunta o total según timeMode
+  shuffleQuestions Boolean       @default(true)
+  shuffleOptions   Boolean       @default(true)
+  scoring          Json          @default("{}") // snapshot { base, timeBonus, wrongPenalty } congelado al publicar
   copiedFromId     String?
   createdById      String?
-  createdBy        User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy        User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
   rankedAt         DateTime? // último recálculo de rankings disparado por este quiz
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  // Generado por un calendario automático: un borrador por turno (slotAt = apertura prevista).
+  scheduleId       String?
+  schedule         QuizSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  slotAt           DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   questions QuizQuestion[]
   attempts  Attempt[]
 
+  @@unique([scheduleId, slotAt])
   @@index([categoryId, opensAt])
   @@index([tournamentId, opensAt])
   @@index([status, closesAt])
+}
+
+/// Calendario fijo de una categoría: el worker genera borradores por adelantado para cada turno.
+model QuizSchedule {
+  id            String     @id @default(cuid())
+  categoryId    String     @unique
+  category      Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  enabled       Boolean    @default(true)
+  weekdays      Int[] // 0 = domingo … 6 = sábado
+  timeOfDay     String // "HH:mm" en `timezone`
+  timezone      String     @default("America/Argentina/Buenos_Aires")
+  titleTemplate String     @default("{categoria} · {fecha}")
+  difficultyMix Json? // { "1": 2, "3": 1 } = cantidad por dificultad; null = sin restricción
+  timeMode      TimeMode   @default(PER_QUESTION)
+  skippedSlots  DateTime[] // turnos salteados a mano: no se vuelven a generar
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  quizzes Quiz[]
 }
 
 model QuizQuestion {
@@ -350,6 +376,7 @@ model QuizQuestion {
   position       Int
   shuffleOptions Boolean? // override por pregunta dentro del cuestionario
   voided         Boolean  @default(false) // anulada: no suma ni resta para nadie
+  reused         Boolean  @default(false) // elegida por el generador automático entre preguntas ya usadas
 
   answers AttemptAnswer[]
 
@@ -614,4 +641,30 @@ model CreditTransaction {
 
   @@index([userId, createdAt])
   @@index([externalRef])
+}
+
+// ───────────────────────────── Notificaciones ─────────────────────────────
+
+enum NotificationLevel {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// Avisos dentro de la app (hoy solo para admins y mods).
+model Notification {
+  id        String            @id @default(cuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  level     NotificationLevel
+  kind      String // "bank.coverage", "draft.pending", "draft.incomplete", "draft.skipped"
+  title     String
+  body      String?
+  href      String?
+  dedupeKey String // evita repetir el mismo aviso
+  readAt    DateTime?
+  createdAt DateTime          @default(now())
+
+  @@unique([userId, dedupeKey])
+  @@index([userId, readAt])
 }

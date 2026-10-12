@@ -17,6 +17,7 @@ export function rulesFromSettings(s: Settings) {
     bestK: s["ranking.bestK"],
     windowDays: s["ranking.windowDays"],
     frequencyDays: s["quiz.frequencyDays"],
+    questionCount: s["quiz.questionCount"],
     activeDays: s["quiz.activeDays"],
     computableDays: s["quiz.computableDays"],
     revealOnClose: s["review.revealAnswers"] === "ON_CLOSE",

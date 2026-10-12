@@ -1,5 +1,6 @@
 import { prisma } from "@/server/db";
 import { logger } from "@/server/logger";
+import { fillIncompleteDrafts, generateDrafts, handleDueDrafts, notifyCoverage, notifyDrafts } from "@/server/autoquiz/service";
 import { expireStaleAttempts } from "@/server/game/engine";
 import { releaseExpiredLeaves } from "@/server/league/service";
 import { recomputeAllStandings, recomputeForQuiz } from "@/server/ranking/service";
@@ -38,6 +39,17 @@ export async function syncQuizStatuses(now = new Date()) {
   return changed.length;
 }
 
+/** Calendarios automáticos: primero vencimientos (publicar o descartar), después generar y avisar. */
+async function runAutoQuizzes(now = new Date()) {
+  // Primero se completan los que quedaron cortos (los más próximos tienen prioridad sobre los turnos nuevos),
+  // así un borrador recién completado ya puede publicarse solo en esta misma pasada.
+  const filled = await fillIncompleteDrafts(now);
+  const due = await handleDueDrafts(now);
+  const generated = await generateDrafts(now);
+  const notified = await notifyDrafts(now);
+  return { ...due, ...filled, ...generated, notified: notified.sent };
+}
+
 export const tasks = {
   "quiz-status-sync": { cron: "* * * * *", run: () => syncQuizStatuses() },
   "attempts-expire": { cron: "* * * * *", run: () => expireStaleAttempts() },
@@ -46,6 +58,9 @@ export const tasks = {
   // Recálculo completo diario: la ventana del ranking se desliza aunque no haya eventos.
   "standings-nightly": { cron: "15 3 * * *", run: () => recomputeAllStandings() },
   "ratelimit-purge": { cron: "0 * * * *", run: () => purgeRateBuckets() },
+  autoquiz: { cron: "*/15 * * * *", run: () => runAutoQuizzes() },
+  // Una vez por día en horario de trabajo: ¿alcanzan las preguntas nuevas para los próximos turnos?
+  "bank-coverage": { cron: "0 9 * * *", run: () => notifyCoverage() },
 } as const;
 
 export type TaskName = keyof typeof tasks;

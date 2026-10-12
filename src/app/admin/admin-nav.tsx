@@ -2,7 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Gauge, Grid3x3, HelpCircle, List, ScrollText, Settings, Trophy, Upload, Users } from "lucide-react";
+import {
+  Bell,
+  BookOpen,
+  CalendarCheck,
+  Database,
+  Gauge,
+  Grid3x3,
+  HelpCircle,
+  List,
+  ScrollText,
+  Settings,
+  Trophy,
+  Upload,
+  Users,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isActive } from "@/components/layout/nav-items";
 
@@ -17,9 +31,12 @@ const ICONS = {
   settings: Settings,
   book: BookOpen,
   scroll: ScrollText,
+  bell: Bell,
+  approve: CalendarCheck,
+  database: Database,
 };
 
-export type AdminNavItem = { href: string; label: string; icon: keyof typeof ICONS; exact?: boolean };
+export type AdminNavItem = { href: string; label: string; icon: keyof typeof ICONS; exact?: boolean; badge?: number };
 
 export function AdminNav({ items }: { items: AdminNavItem[] }) {
   const pathname = usePathname();
@@ -40,6 +57,12 @@ export function AdminNav({ items }: { items: AdminNavItem[] }) {
           >
             <Icon className="size-4" aria-hidden />
             {item.label}
+            {item.badge ? (
+              <span className="ml-auto rounded-full bg-destructive px-1.5 text-xs font-semibold text-white tabular-nums">
+                {item.badge}
+                <span className="sr-only"> sin leer</span>
+              </span>
+            ) : null}
           </Link>
         );
       })}

@@ -235,6 +235,17 @@ async function seedDemo(adminId: string) {
     }
   }
 
+  // Los cuestionarios demo de liga tienen 5 preguntas: la liga exige una cantidad fija al publicar.
+  await prisma.appSetting.upsert({
+    where: { key: "quiz.questionCount" },
+    create: { key: "quiz.questionCount", value: 5, updatedById: adminId },
+    update: {},
+  });
+  // Calendario automático de ejemplo (deshabilitado: se activa desde la categoría).
+  await prisma.quizSchedule.create({
+    data: { categoryId: categories.futbol.id, enabled: false, weekdays: [1, 3, 5], timeOfDay: "20:00", titleTemplate: "{categoria} #{n}" },
+  });
+
   // Torneo
   const tournament = await prisma.tournament.create({
     data: {

@@ -76,7 +76,9 @@ export default async function HowToPlayPage() {
           </Section>
           <Section title="🗓️ Los cuestionarios">
             <p>
-              Cada categoría publica un cuestionario nuevo aproximadamente cada {r.frequencyDays} días. Pasan por estas etapas:
+              Cada categoría publica un cuestionario nuevo aproximadamente cada {r.frequencyDays} días. Todos los cuestionarios de la liga
+              tienen <strong>la misma cantidad de preguntas</strong> (habitualmente {r.questionCount}), así cada uno vale lo mismo en la tabla.
+              Pasan por estas etapas:
             </p>
             <ol className="ml-5 list-decimal space-y-1">
               <li>

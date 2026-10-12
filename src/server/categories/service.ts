@@ -30,7 +30,8 @@ function cleanOverrides(raw: Record<string, unknown>) {
     if (v === "" || v === null || v === undefined) continue;
     if (!categoryOverridableKeys.includes(k as SettingKey)) continue;
     const def = settingsRegistry[k as SettingKey];
-    const parsed = def.schema.safeParse(typeof v === "string" && !isNaN(Number(v)) ? Number(v) : v);
+    const value = v === "true" ? true : v === "false" ? false : typeof v === "string" && !isNaN(Number(v)) ? Number(v) : v;
+    const parsed = def.schema.safeParse(value);
     if (!parsed.success) throw new UserError(`Valor inválido para "${def.label}".`);
     out[k] = parsed.data;
   }

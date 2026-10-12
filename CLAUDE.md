@@ -26,7 +26,7 @@ Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderad
 ## Estructura
 - `src/app/(auth)` ingreso/registro · `src/app/(app)` pantallas del jugador (en la UI el modo por categorías se llama **Liga**; la URL sigue siendo `/categorias`) · `src/app/admin` panel · `src/app/api` route handlers (juego, archivos, auth, health).
 - `src/server/**` lógica de dominio. Las páginas y actions llaman a servicios; **no** escriben consultas Prisma complejas inline.
-  - Funciones **puras** (testeadas en `tests/unit`): `quiz/status.ts`, `scoring/scoring.ts`, `ranking/compute.ts`, `wildcards/strategies.ts`, `league/lives.ts`, `auth/permissions.ts`.
+  - Funciones **puras** (testeadas en `tests/unit`): `quiz/status.ts`, `scoring/scoring.ts`, `ranking/compute.ts`, `wildcards/strategies.ts`, `league/lives.ts`, `auth/permissions.ts`, `autoquiz/{slots,pick,coverage,title}.ts`.
   - Servicios con DB: `credits/service.ts` (ledger), `ranking/service.ts`, `config/service.ts`, etc. Aceptan un parámetro `db: Db` (cliente o transacción).
 - `src/generated/prisma` cliente generado (no editar, no versionar).
 
@@ -67,4 +67,8 @@ Usuarios del seed: `admin` / `ADMIN_PASSWORD` del `.env`, `moderador` / `Moderad
 - Racha: cuestionarios de liga consecutivos de una categoría (por fecha de apertura) jugados sin saltear; cada `credits.streakLength` paga `credits.streakBonus`.
 - Torneo: los empates en un puesto premiado cobran el premio completo de ese puesto. El costo no se puede cambiar con inscriptos.
 - Corregir la respuesta correcta de una pregunta bloqueada está permitido (es la vía para errores) y recalcula todos los cuestionarios que la usan; queda en auditoría.
+- Liga: todos los cuestionarios de una categoría llevan exactamente `quiz.questionCount` preguntas (se valida al publicar; torneos libres). Así cada uno vale lo mismo en la tabla sin normalizar puntajes.
+- Calendario automático (`QuizSchedule`, `src/server/autoquiz/`): el worker (`autoquiz`, cada 15 min) genera borradores por turno entre `alertHours` y `horizonDays`. Aprobar = `publishQuiz`. Un borrador completo sin aprobar se publica solo `autoquiz.autoPublishHours` antes de abrir (aparece como "Próximamente"; default activo, se apaga por categoría con `autoquiz.autoPublish`); uno incompleto o con la publicación automática apagada se descarta al llegar la apertura. Saltear/borrar un borrador anota el turno en `skippedSlots` para no regenerarlo. Un quiz manual de la liga a menos de 6 h de un turno lo ocupa.
+- Preguntas de un borrador quedan reservadas (ya no son "nunca usadas"). Se eligen primero nunca usadas; si faltan y `autoquiz.allowReuse`, las usadas hace más de `reuseAfterDays`, la de uso más viejo primero (`QuizQuestion.reused`).
+- Cobertura del banco: `projectCoverage` proyecta los turnos futuros contra las preguntas nunca usadas; si no cubren `coverageWarnDays` (o `coverageCriticalDays`) se avisa a admins y mods (`bank-coverage`, diario). Avisos dentro de la app: `Notification` + `notifyStaff` (dedupe por `dedupeKey`); no hay mail todavía.
 - Seed: idempotente; nunca pisa una contraseña existente. Datos demo solo si `SEED_DEMO != "false"` y la base no tiene categorías.

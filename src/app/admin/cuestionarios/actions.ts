@@ -18,6 +18,7 @@ import {
   updateQuiz,
 } from "@/server/quiz/service";
 import { searchQuestions } from "@/server/questions/service";
+import { fillDraft, regenerateDraft, replaceQuestion } from "@/server/autoquiz/service";
 import { formValues, toFormState, type FormState } from "@/server/actions";
 import { fromDateTimeInput } from "@/lib/format";
 
@@ -104,6 +105,7 @@ async function simple(fn: () => Promise<unknown>, path: string): Promise<FormSta
 
 export async function publishQuizAction(id: string) {
   const user = await authorize("quiz.publish");
+  revalidatePath("/admin/cuestionarios/por-aprobar");
   return simple(() => publishQuiz(id, user), `/admin/cuestionarios/${id}`);
 }
 
@@ -142,4 +144,38 @@ export async function changeCorrectAction(quizId: string, questionId: string, op
 export async function recalculateQuizAction(id: string) {
   const user = await authorize("quiz.recalculate");
   return simple(() => recalculateQuiz(id, user), `/admin/cuestionarios/${id}`);
+}
+
+// ── Borradores automáticos ──
+
+export async function replaceQuestionAction(quizId: string, quizQuestionId: string) {
+  const user = await authorize("quiz.manage");
+  return simple(() => replaceQuestion(quizId, quizQuestionId, user), `/admin/cuestionarios/${quizId}`);
+}
+
+export async function regenerateDraftAction(quizId: string) {
+  const user = await authorize("quiz.manage");
+  return simple(() => regenerateDraft(quizId, user), `/admin/cuestionarios/${quizId}`);
+}
+
+/** Completa un borrador incompleto con las preguntas aprobadas disponibles, sin tocar las que ya tiene. */
+export async function fillDraftAction(quizId: string): Promise<FormState> {
+  try {
+    const user = await authorize("quiz.manage");
+    const r = await fillDraft(quizId, user);
+    revalidatePath(`/admin/cuestionarios/${quizId}`);
+    revalidatePath("/admin/cuestionarios/por-aprobar");
+    return {
+      ok: true,
+      message: `Se agregaron ${r.added} pregunta${r.added === 1 ? "" : "s"}${r.missing ? `; todavía faltan ${r.missing}.` : "."}`,
+    };
+  } catch (err) {
+    return toFormState(err);
+  }
+}
+
+/** Saltea el turno: borra el borrador y el worker no lo vuelve a generar. */
+export async function skipDraftAction(quizId: string) {
+  const user = await authorize("quiz.manage");
+  return simple(() => deleteDraftQuiz(quizId, user), "/admin/cuestionarios/por-aprobar");
 }

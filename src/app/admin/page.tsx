@@ -3,7 +3,8 @@ import { requirePermission } from "@/server/auth/session";
 import { prisma } from "@/server/db";
 import { PageHeader } from "@/components/common";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDate, formatNumber } from "@/lib/format";
+import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
+import { coverageMessage, listBankCoverage, listPendingDrafts } from "@/server/autoquiz/service";
 
 export const metadata = { title: "Dashboard" };
 
@@ -47,10 +48,26 @@ export default async function DashboardPage() {
     }),
   ]);
   const maxAttempts = Math.max(1, ...recentQuizzes.map((q) => q._count.attempts));
+  const [coverage, drafts, skipped] = await Promise.all([
+    listBankCoverage(now),
+    listPendingDrafts(now),
+    prisma.auditLog.findMany({ where: { action: "quiz.autoSkipped", createdAt: { gte: weekAgo } }, orderBy: { createdAt: "desc" }, take: 5 }),
+  ]);
+  const critical = coverage.filter((c) => c.coverage.level === "CRITICAL");
+  const lowCoverage = coverage.filter((c) => c.coverage.level !== "OK").length;
+  const urgentDrafts = drafts.filter((d) => d.urgent).length;
 
   return (
     <>
       <PageHeader title="Dashboard" description={`Hola, ${user.name}. Resumen de los últimos 7 días.`} />
+      {critical.map((c) => (
+        <div key={c.categoryId} role="alert" className="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">
+          <strong>{c.categoryName}: se acaban las preguntas nuevas.</strong> {coverageMessage(c)}{" "}
+          <Link href="/admin/preguntas/cobertura" className="font-medium underline">
+            Ver cobertura
+          </Link>
+        </div>
+      ))}
       <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Usuarios" value={users} hint={`+${newUsers} esta semana`} href="/admin/usuarios" />
         <Stat label="Jugadores activos (7 días)" value={activePlayers} />
@@ -59,6 +76,13 @@ export default async function DashboardPage() {
         <Stat label="Cuestionarios vigentes" value={activeQuizzes} href="/admin/cuestionarios?status=ACTIVE" />
         <Stat label="Torneos en curso" value={openTournaments} href="/admin/torneos" />
         <Stat label="Créditos en circulación" value={credits._sum.amount ?? 0} />
+        <Stat
+          label="Borradores por aprobar"
+          value={drafts.length}
+          hint={urgentDrafts ? `${urgentDrafts} urgente(s)` : undefined}
+          href="/admin/cuestionarios/por-aprobar"
+        />
+        <Stat label="Categorías con banco bajo" value={lowCoverage} href="/admin/preguntas/cobertura" />
       </div>
       <Card>
         <CardHeader>
@@ -84,6 +108,23 @@ export default async function DashboardPage() {
           </ul>
         </CardContent>
       </Card>
+      {skipped.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-base">Turnos salteados (últimos 7 días)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="grid gap-1 text-sm">
+              {skipped.map((a) => (
+                <li key={a.id} className="flex justify-between gap-2">
+                  <span className="truncate">{(a.before as { title?: string } | null)?.title ?? "Cuestionario"}</span>
+                  <span className="shrink-0 text-muted-foreground">{formatDateTime(a.createdAt, user.timezone)}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
     </>
   );
 }

@@ -5,7 +5,8 @@ export function overrideFields(global: Settings): OverrideField[] {
   return categoryOverridableKeys
     .filter((k) => k !== "quiz.frequencyDays") // tiene su propio campo
     .map((k) => {
-      const d = settingsRegistry[k] as { label: string; help?: string; unit?: string };
-      return { key: k, label: d.label, help: d.help, unit: d.unit, globalValue: global[k] as number };
+      const d = settingsRegistry[k] as { label: string; help?: string; unit?: string; default: unknown };
+      const kind = typeof d.default === "boolean" ? ("boolean" as const) : ("number" as const);
+      return { key: k, label: d.label, help: d.help, unit: d.unit, kind, globalValue: global[k] as number | boolean };
     });
 }

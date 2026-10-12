@@ -42,7 +42,7 @@ export function UploadForm({ canApprove }: { canApprove: boolean }) {
       </div>
       {canApprove && (
         <label className="flex items-center gap-2 text-sm">
-          <Checkbox name="approve" /> Aprobar directamente las preguntas importadas
+          <Checkbox name="approve" defaultChecked /> Proponer como aprobadas las filas sin advertencias (lo podés cambiar en la previsualización)
         </label>
       )}
       <Button type="submit" disabled={busy} className="w-fit">

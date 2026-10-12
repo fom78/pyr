@@ -6,6 +6,8 @@ import { z } from "zod";
 import { authorize } from "@/server/auth/guard";
 import { userCan } from "@/server/auth/session";
 import {
+  approveQuestions,
+  buildQuestionWhere,
   createQuestion,
   createQuestionVersion,
   duplicateQuestion,
@@ -15,6 +17,7 @@ import {
   updateQuestion,
 } from "@/server/questions/service";
 import { toFormState, type FormState } from "@/server/actions";
+import { parseQuestionFilters } from "./filters";
 
 const modeSchema = z.enum(["create", "update", "version"]);
 
@@ -63,4 +66,28 @@ export async function archiveQuestionAction(id: string, archived: boolean) {
   const user = await authorize("question.edit");
   await setArchived(id, archived, user);
   revalidatePath(`/admin/preguntas/${id}`);
+}
+
+/**
+ * Aprobación masiva desde el listado: las tildadas (`id`) o, con `scope=filter`,
+ * todas las no aprobadas que cumplen los filtros actuales (`query`).
+ */
+export async function bulkApproveAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  try {
+    const user = await authorize("question.review");
+    let where;
+    if (fd.get("scope") === "filter") {
+      const filters = parseQuestionFilters(Object.fromEntries(new URLSearchParams(String(fd.get("query") ?? ""))));
+      where = buildQuestionWhere(filters);
+    } else {
+      const ids = fd.getAll("id").map(String).filter(Boolean);
+      if (ids.length === 0) return { error: "No seleccionaste ninguna pregunta." };
+      where = { id: { in: ids } };
+    }
+    const n = await approveQuestions(where, user);
+    revalidatePath("/admin/preguntas");
+    return { ok: true, message: n === 0 ? "No había preguntas para aprobar." : `Se aprobaron ${n} pregunta${n === 1 ? "" : "s"}.` };
+  } catch (err) {
+    return toFormState(err);
+  }
 }

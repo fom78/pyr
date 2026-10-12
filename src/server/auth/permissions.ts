@@ -15,6 +15,7 @@ export type Action =
   | "quiz.manage"
   | "quiz.publish"
   | "quiz.recalculate"
+  | "schedule.manage" // calendarios de cuestionarios automáticos (solo admin)
   | "tournament.manage"
   | "user.list"
   | "user.ban"

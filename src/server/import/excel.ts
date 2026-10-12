@@ -80,12 +80,39 @@ function cellText(v: ExcelJS.CellValue): string {
   return String(v).trim();
 }
 
+/**
+ * Quita los comentarios de celda (y su dibujo VML) de las hojas. ExcelJS solo los encuentra
+ * en `xl/commentsN.xml` con ruta relativa; otras herramientas los guardan en otro lado
+ * (ej. `/xl/comments/comment1.xml`) y la carga revienta. Para importar no hacen falta.
+ */
+async function stripComments(xlsx: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(xlsx);
+  const rels = zip.file(/^xl\/worksheets\/_rels\/[^/]+\.rels$/);
+  for (const file of rels) {
+    const xml = await file.async("string");
+    const cleaned = xml.replace(/<Relationship\b[^>]*\/relationships\/(?:comments|vmlDrawing)"[^>]*\/>/g, "");
+    if (cleaned !== xml) zip.file(file.name, cleaned);
+  }
+  for (const sheet of zip.file(/^xl\/worksheets\/[^/]+\.xml$/)) {
+    const xml = await sheet.async("string");
+    const cleaned = xml.replace(/<legacyDrawing\b[^>]*\/>/g, "");
+    if (cleaned !== xml) zip.file(sheet.name, cleaned);
+  }
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
 async function readRows(xlsx: Buffer): Promise<{ row: number; raw: RawRow }[]> {
-  const wb = new ExcelJS.Workbook();
+  let wb = new ExcelJS.Workbook();
   try {
     await wb.xlsx.load(xlsx as unknown as ArrayBuffer);
-  } catch {
-    throw new UserError("No se pudo leer el archivo. ¿Es un .xlsx válido?");
+  } catch (first) {
+    try {
+      wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await stripComments(xlsx)) as unknown as ArrayBuffer);
+    } catch {
+      logger.warn({ err: first }, "import: no se pudo leer el xlsx");
+      throw new UserError("No se pudo leer el archivo. ¿Es un .xlsx válido?");
+    }
   }
   const ws = wb.worksheets[0];
   if (!ws) throw new UserError("El archivo no tiene hojas.");
@@ -128,7 +155,24 @@ async function fetchImage(url: string): Promise<Buffer> {
   }
 }
 
-export type StoredRow = ValidatedRow & { imageKey?: string; similar?: { id: string; text: string | null; similarity: number }[] };
+export type StoredRow = ValidatedRow & {
+  imageKey?: string;
+  similar?: { id: string; text: string | null; similarity: number }[];
+  /** Resultado al confirmar: la pregunta creada o la fila descartada a mano. */
+  createdId?: string;
+  decision?: RowDecision;
+};
+
+/** Qué hacer con una fila válida al confirmar. */
+export type RowDecision = "approve" | "pending" | "skip";
+
+/**
+ * Decisión por defecto: las filas limpias se aprueban si se marcó "aprobar directamente";
+ * las parecidas a una existente nunca se aprueban solas.
+ */
+export function defaultDecision(row: StoredRow, autoApprove: boolean): RowDecision {
+  return autoApprove && !row.similar?.length ? "approve" : "pending";
+}
 
 /**
  * Lee el Excel (+ zip opcional), valida fila por fila, procesa imágenes y guarda una previsualización (ImportJob).
@@ -191,27 +235,61 @@ export async function previewImport(params: { authorId: string; fileName: string
   });
 }
 
-/** Confirma una importación. mode "valid" = solo filas válidas; "all" = todo o nada. */
-export async function commitImport(jobId: string, mode: "valid" | "all", actor: { id: string }) {
+/**
+ * Confirma una importación. mode "valid" = solo filas válidas; "all" = todo o nada.
+ * `decisions` (por número de fila) permite no importar una fila o dejarla pendiente de revisión.
+ */
+export async function commitImport(
+  jobId: string,
+  mode: "valid" | "all",
+  actor: { id: string },
+  decisions: Record<number, RowDecision> = {},
+  /** Si el actor puede aprobar al importar. Por defecto, lo que se marcó al subir el archivo. */
+  opts: { canApprove?: boolean } = {},
+) {
   const job = await prisma.importJob.findUnique({ where: { id: jobId } });
   if (!job || job.authorId !== actor.id) throw new UserError("Importación no encontrada.");
   if (job.status !== "PREVIEW") throw new UserError("Esta importación ya fue procesada.");
   if (mode === "all" && job.invalidCount > 0) throw new UserError("Hay filas con errores: corregí el archivo o importá solo las válidas.");
-  const rows = (job.rows as unknown as StoredRow[]).filter((r) => !r.errors.length && r.input);
+  const canApprove = opts.canApprove ?? job.autoApprove;
+  const rows = job.rows as unknown as StoredRow[];
+  for (const r of rows) {
+    if (!r.errors.length && r.input) {
+      const d = decisions[r.row] ?? defaultDecision(r, job.autoApprove);
+      r.decision = d === "approve" && !canApprove ? "pending" : d;
+    }
+  }
+  const toCreate = rows.filter((r) => !r.errors.length && r.input && r.decision !== "skip");
+  if (toCreate.length === 0) throw new UserError("No quedó ninguna fila para importar.");
 
   const created = await prisma.$transaction(
     async (tx) => {
-      let n = 0;
-      for (const r of rows) {
-        await createQuestion({ ...r.input, imageKey: r.imageKey }, actor, { approve: job.autoApprove }, tx);
-        n++;
+      for (const r of toCreate) {
+        const approve = r.decision === "approve";
+        const q = await createQuestion({ ...r.input, imageKey: r.imageKey }, actor, { approve }, tx);
+        r.createdId = q.id;
       }
-      await tx.importJob.update({ where: { id: jobId }, data: { status: "COMMITTED", createdCount: n, committedAt: new Date() } });
-      return n;
+      await tx.importJob.update({
+        where: { id: jobId },
+        data: {
+          status: "COMMITTED",
+          createdCount: toCreate.length,
+          committedAt: new Date(),
+          rows: JSON.parse(JSON.stringify(rows)) as Prisma.InputJsonValue,
+        },
+      });
+      return toCreate.length;
     },
     { timeout: 120_000 },
   );
-  await logAudit({ actorId: actor.id, action: "question.import", entityType: "ImportJob", entityId: jobId, meta: { created, autoApprove: job.autoApprove } });
+  const skipped = rows.filter((r) => r.decision === "skip").length;
+  await logAudit({
+    actorId: actor.id,
+    action: "question.import",
+    entityType: "ImportJob",
+    entityId: jobId,
+    meta: { created, skipped, autoApprove: job.autoApprove },
+  });
   return created;
 }
 

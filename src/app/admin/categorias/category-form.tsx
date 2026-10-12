@@ -3,14 +3,23 @@
 import { useActionState } from "react";
 import { Field, FormError } from "@/components/forms/field";
 import { SubmitButton } from "@/components/forms/submit-button";
+import { UnsavedBadge, useUnsavedChanges } from "@/components/forms/unsaved-changes";
 import { ImageUpload } from "@/components/forms/image-upload";
+import { NativeSelect } from "@/components/forms/native-select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { saveCategoryAction } from "./actions";
 
-export type OverrideField = { key: string; label: string; help?: string; unit?: string; globalValue: number | string | boolean };
+export type OverrideField = {
+  key: string;
+  label: string;
+  help?: string;
+  unit?: string;
+  kind: "number" | "boolean";
+  globalValue: number | string | boolean;
+};
 
 type Props = {
   id: string | null;
@@ -31,8 +40,9 @@ type Props = {
 export function CategoryForm({ id, initial, overrides }: Props) {
   const [state, action] = useActionState(saveCategoryAction.bind(null, id), null);
   const fe = state?.fieldErrors;
+  const { ref, dirty } = useUnsavedChanges(state);
   return (
-    <form action={action} className="grid gap-6">
+    <form ref={ref} action={action} className="grid gap-6">
       <FormError message={state?.error} />
       <Card>
         <CardHeader>
@@ -71,22 +81,40 @@ export function CategoryForm({ id, initial, overrides }: Props) {
           <CardDescription>Dejá vacío para usar el valor global (entre paréntesis).</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          {overrides.map((o) => (
-            <Field
-              key={o.key}
-              label={`${o.label}${o.unit ? ` (${o.unit})` : ""}`}
-              name={`settings.${o.key}`}
-              type="number"
-              step="any"
-              placeholder={`(${String(o.globalValue)})`}
-              defaultValue={initial?.settings[o.key] !== undefined ? String(initial.settings[o.key]) : ""}
-              hint={o.help}
-            />
-          ))}
+          {overrides.map((o) =>
+            o.kind === "boolean" ? (
+              <div key={o.key} className="grid content-start gap-1.5">
+                <Label htmlFor={`settings.${o.key}`}>{o.label}</Label>
+                <NativeSelect
+                  id={`settings.${o.key}`}
+                  name={`settings.${o.key}`}
+                  defaultValue={initial?.settings[o.key] !== undefined ? String(initial.settings[o.key]) : ""}
+                >
+                  <option value="">Usar global ({o.globalValue ? "sí" : "no"})</option>
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </NativeSelect>
+                {o.help && <p className="text-xs text-muted-foreground">{o.help}</p>}
+              </div>
+            ) : (
+              <Field
+                key={o.key}
+                label={`${o.label}${o.unit ? ` (${o.unit})` : ""}`}
+                name={`settings.${o.key}`}
+                type="number"
+                step="any"
+                placeholder={`(${String(o.globalValue)})`}
+                defaultValue={initial?.settings[o.key] !== undefined ? String(initial.settings[o.key]) : ""}
+                hint={o.help}
+              />
+            ),
+          )}
         </CardContent>
       </Card>
-      <div>
+      <div className="flex flex-wrap items-center gap-3">
         <SubmitButton pendingText="Guardando…">Guardar categoría</SubmitButton>
+        <UnsavedBadge dirty={dirty} />
+        {!dirty && state?.message && <span className="text-success text-sm">{state.message}</span>}
       </div>
     </form>
   );

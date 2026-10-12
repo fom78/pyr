@@ -4,24 +4,29 @@ import { requirePermission, userCan } from "@/server/auth/session";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Logo } from "@/components/layout/logo";
+import { unreadCount } from "@/server/notifications/service";
 import { AdminNav, type AdminNavItem } from "./admin-nav";
 
 export const metadata = { title: { default: "Administración", template: "%s · Admin PyR" } };
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await requirePermission("admin.access");
-  const [settings, users, audit, rules] = await Promise.all([
+  const [settings, users, audit, rules, unread] = await Promise.all([
     userCan(user, "settings.manage"),
     userCan(user, "user.list"),
     userCan(user, "audit.view"),
     userCan(user, "rules.edit"),
+    unreadCount(user.id),
   ]);
   const items: AdminNavItem[] = [
     { href: "/admin", label: "Dashboard", icon: "gauge", exact: true },
+    { href: "/admin/notificaciones", label: "Notificaciones", icon: "bell", badge: unread },
     { href: "/admin/categorias", label: "Categorías", icon: "grid" },
     { href: "/admin/preguntas", label: "Preguntas", icon: "help" },
+    { href: "/admin/preguntas/cobertura", label: "Cobertura del banco", icon: "database" },
     { href: "/admin/importar", label: "Importar Excel", icon: "upload" },
     { href: "/admin/cuestionarios", label: "Cuestionarios", icon: "list" },
+    { href: "/admin/cuestionarios/por-aprobar", label: "Por aprobar", icon: "approve" },
     { href: "/admin/torneos", label: "Torneos", icon: "trophy" },
     ...(users ? [{ href: "/admin/usuarios", label: "Usuarios", icon: "users" } as const] : []),
     ...(settings ? [{ href: "/admin/config", label: "Configuración", icon: "settings" } as const] : []),
@@ -60,7 +65,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </SheetContent>
           </Sheet>
           <span className="font-semibold">Administración</span>
-          <span className="ml-auto text-xs text-muted-foreground">
+          {unread > 0 && (
+            <Link href="/admin/notificaciones" className="ml-auto text-xs font-medium text-destructive">
+              {unread} aviso{unread === 1 ? "" : "s"}
+            </Link>
+          )}
+          <span className={unread > 0 ? "text-xs text-muted-foreground" : "ml-auto text-xs text-muted-foreground"}>
             {user.name} · {user.role === "ADMIN" ? "Admin" : "Mod"}
           </span>
         </header>

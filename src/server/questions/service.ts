@@ -147,6 +147,18 @@ export async function reviewQuestion(
   return q;
 }
 
+/** Aprueba varias preguntas de una (solo las que no estén aprobadas ni archivadas). Devuelve cuántas aprobó. */
+export async function approveQuestions(where: Prisma.QuestionWhereInput, actor: { id: string }, db: Db = prisma) {
+  const ids = (
+    await db.question.findMany({ where: { AND: [where, { status: { not: "APPROVED" }, archived: false }] }, select: { id: true }, take: 1000 })
+  ).map((q) => q.id);
+  if (ids.length === 0) return 0;
+  const reviewedAt = new Date();
+  await db.question.updateMany({ where: { id: { in: ids } }, data: { status: "APPROVED", reviewComment: null, reviewedById: actor.id, reviewedAt } });
+  await logAudit({ actorId: actor.id, action: "question.bulkApprove", entityType: "Question", meta: { count: ids.length, ids } }, db);
+  return ids.length;
+}
+
 export async function setArchived(id: string, archived: boolean, actor: { id: string }, db: Db = prisma) {
   await db.question.update({ where: { id }, data: { archived } });
   await logAudit({ actorId: actor.id, action: archived ? "question.archive" : "question.unarchive", entityType: "Question", entityId: id }, db);

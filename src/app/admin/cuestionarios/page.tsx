@@ -9,6 +9,7 @@ import { EmptyState, PageHeader, Pager, parsePage, str } from "@/components/comm
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/forms/native-select";
+import { AutoFilterForm } from "@/components/forms/auto-filter-form";
 import { formatDateTime } from "@/lib/format";
 import { QuizStatusBadge } from "@/components/game/quiz-status-badge";
 import { quizRefOptions } from "./refs";
@@ -55,7 +56,7 @@ export default async function QuizzesPage({ searchParams }: { searchParams: Prom
     <>
       <PageHeader
         title="Cuestionarios"
-        description={`${total} en total`}
+        description="Los filtros se aplican al elegirlos."
         actions={
           <Button asChild>
             <Link href={`/admin/cuestionarios/nuevo${ref ? `?ref=${ref}` : ""}`}>
@@ -64,7 +65,7 @@ export default async function QuizzesPage({ searchParams }: { searchParams: Prom
           </Button>
         }
       />
-      <form className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border p-3">
+      <AutoFilterForm className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border p-3">
         <div className="grid min-w-52 flex-1 gap-1">
           <Label htmlFor="ref">Categoría / torneo</Label>
           <NativeSelect id="ref" name="ref" defaultValue={ref}>
@@ -87,10 +88,24 @@ export default async function QuizzesPage({ searchParams }: { searchParams: Prom
             <option value="EXPIRED">Historial</option>
           </NativeSelect>
         </div>
-        <Button type="submit" variant="secondary">
-          Filtrar
-        </Button>
-      </form>
+      </AutoFilterForm>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm" aria-live="polite">
+        <p>
+          <strong className="tabular-nums">{total}</strong> cuestionario{total === 1 ? "" : "s"}
+          {ref || status ? " con estos filtros" : " en total"}
+          {total > quizzes.length && (
+            <span className="text-muted-foreground">
+              {" "}
+              · mostrando {(page - 1) * PAGE_SIZE + 1}–{(page - 1) * PAGE_SIZE + quizzes.length}
+            </span>
+          )}
+        </p>
+        {(ref || status) && (
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/admin/cuestionarios">Limpiar filtros</Link>
+          </Button>
+        )}
+      </div>
       {quizzes.length === 0 ? (
         <EmptyState title="No hay cuestionarios" description="Creá uno nuevo o copiá uno existente." />
       ) : (

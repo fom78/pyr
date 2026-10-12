@@ -124,11 +124,21 @@ export async function setQuizQuestions(id: string, questionIds: string[], actor:
   await logAudit({ actorId: actor.id, action: "quiz.questions", entityType: "Quiz", entityId: id, meta: { count: unique.length } });
 }
 
-export async function publishQuiz(id: string, actor: { id: string }, now = new Date()) {
-  const quiz = await prisma.quiz.findUnique({ where: { id }, include: { questions: { include: { question: true } }, tournament: true } });
+/** `actor.id` null = lo publica el sistema (calendario automático). */
+export async function publishQuiz(id: string, actor: { id: string | null }, now = new Date()) {
+  const quiz = await prisma.quiz.findUnique({
+    where: { id },
+    include: { questions: { include: { question: true } }, tournament: true, category: true },
+  });
   if (!quiz) throw new NotFoundError("Cuestionario");
   if (quiz.publishedAt) throw new UserError("Ya está publicado.");
   if (!quiz.questions.length) throw new UserError("Agregá preguntas antes de publicar.");
+  // Liga: todos los cuestionarios llevan la misma cantidad de preguntas para que valgan lo mismo en la tabla.
+  if (quiz.category && !quiz.tournamentId) {
+    const expected = (await getCategorySettings(quiz.category))["quiz.questionCount"];
+    if (quiz.questions.length !== expected)
+      throw new UserError(`Los cuestionarios de liga llevan exactamente ${expected} preguntas (este tiene ${quiz.questions.length}).`);
+  }
   const notApproved = quiz.questions.filter((q) => q.question.status !== "APPROVED");
   if (notApproved.length) throw new UserError(`Hay ${notApproved.length} pregunta(s) sin aprobar. Solo se publican preguntas aprobadas.`);
   if (quiz.closesAt <= now) throw new UserError("La fecha de cierre ya pasó.");
@@ -183,7 +193,13 @@ export async function deleteDraftQuiz(id: string, actor: { id: string }) {
   const quiz = await prisma.quiz.findUnique({ where: { id } });
   if (!quiz) throw new NotFoundError("Cuestionario");
   if (quiz.publishedAt) throw new UserError("Solo se pueden eliminar borradores.");
-  await prisma.quiz.delete({ where: { id } });
+  // Borrador de un calendario: el turno queda salteado para que el worker no lo vuelva a generar.
+  if (quiz.scheduleId && quiz.slotAt) {
+    await prisma.$transaction([
+      prisma.quizSchedule.update({ where: { id: quiz.scheduleId }, data: { skippedSlots: { push: quiz.slotAt } } }),
+      prisma.quiz.delete({ where: { id } }),
+    ]);
+  } else await prisma.quiz.delete({ where: { id } });
   await logAudit({ actorId: actor.id, action: "quiz.delete", entityType: "Quiz", entityId: id, before: quiz });
 }
 

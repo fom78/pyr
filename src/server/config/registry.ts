@@ -17,7 +17,7 @@ type Def<T extends z.ZodType> = {
   unit?: string;
 };
 
-export type SettingGroup = "Liga" | "Cuestionarios" | "Puntaje" | "Juego" | "Créditos" | "Torneos" | "Moderación";
+export type SettingGroup = "Liga" | "Cuestionarios" | "Automático" | "Puntaje" | "Juego" | "Créditos" | "Torneos" | "Moderación";
 
 const int = (min: number, max: number) => z.number().int().min(min).max(max);
 
@@ -100,8 +100,9 @@ export const settingsRegistry = {
     schema: int(1, 100),
     default: 10,
     label: "Preguntas por cuestionario",
-    help: "Valor por defecto al crear un cuestionario.",
+    help: "Cantidad exacta que lleva cada cuestionario de liga (así todos valen lo mismo en la tabla). Los de torneo son libres.",
     group: "Cuestionarios",
+    categoryOverride: true,
   }),
   "quiz.timeLimitSec": def({
     schema: int(3, 3600),
@@ -125,6 +126,76 @@ export const settingsRegistry = {
     label: "Umbral de posible duplicado",
     help: "Similitud de texto (0 a 1) a partir de la cual se avisa que una pregunta podría estar repetida.",
     group: "Cuestionarios",
+  }),
+
+  // ── Cuestionarios automáticos ──
+  "autoquiz.horizonDays": def({
+    schema: int(1, 90),
+    default: 14,
+    label: "Borradores por adelantado",
+    help: "Cuántos días hacia adelante se mantienen generados los borradores de las categorías con calendario.",
+    group: "Automático",
+    unit: "días",
+  }),
+  "autoquiz.alertHours": def({
+    schema: int(1, 720),
+    default: 72,
+    label: "Aviso de borrador sin aprobar",
+    help: "Horas antes de la apertura en que un borrador sin aprobar pasa a urgente y se avisa a admins y mods. Conviene que sea mayor que el anticipo de publicación automática, así el aviso llega antes.",
+    group: "Automático",
+    unit: "horas",
+  }),
+  "autoquiz.autoPublish": def({
+    schema: z.boolean(),
+    default: true,
+    label: "Publicar solo si nadie aprueba",
+    help: "Si está activo, un borrador completo sin aprobar se publica solo con el anticipo configurado y aparece como “Próximamente”. Si no (o si está incompleto), al llegar la apertura se descarta y se saltea el turno.",
+    group: "Automático",
+    categoryOverride: true,
+  }),
+  "autoquiz.autoPublishHours": def({
+    schema: int(1, 720),
+    default: 48,
+    label: "Anticipo de publicación automática",
+    help: "Cuántas horas antes de abrir se publica solo un borrador completo que nadie aprobó (desde ahí los jugadores lo ven como “Próximamente”).",
+    group: "Automático",
+    unit: "horas",
+    categoryOverride: true,
+  }),
+  "autoquiz.allowReuse": def({
+    schema: z.boolean(),
+    default: true,
+    label: "Reutilizar preguntas si faltan nuevas",
+    help: "Si no alcanzan las preguntas nunca usadas, el borrador se completa con las usadas hace más tiempo (quedan marcadas).",
+    group: "Automático",
+    categoryOverride: true,
+  }),
+  "autoquiz.reuseAfterDays": def({
+    schema: int(1, 3650),
+    default: 180,
+    label: "Reutilizar recién después de",
+    help: "Días desde la apertura del último cuestionario que usó una pregunta para poder volver a sugerirla.",
+    group: "Automático",
+    categoryOverride: true,
+    unit: "días",
+  }),
+  "autoquiz.coverageWarnDays": def({
+    schema: int(1, 365),
+    default: 21,
+    label: "Aviso de banco bajo",
+    help: "Se avisa a admins y mods si las preguntas nunca usadas no alcanzan para los turnos de los próximos N días.",
+    group: "Automático",
+    categoryOverride: true,
+    unit: "días",
+  }),
+  "autoquiz.coverageCriticalDays": def({
+    schema: int(1, 365),
+    default: 7,
+    label: "Aviso urgente de banco bajo",
+    help: "Aviso crítico si las preguntas nunca usadas no alcanzan ni para los próximos N días.",
+    group: "Automático",
+    categoryOverride: true,
+    unit: "días",
   }),
 
   // ── Puntaje ──

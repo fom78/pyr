@@ -1,12 +1,12 @@
 "use client";
 
 import { Ban, CheckCircle2, Circle, RotateCcw } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { NativeSelect } from "@/components/forms/native-select";
 import { cn } from "@/lib/utils";
 import { changeCorrectAction, shuffleOverrideAction, voidQuestionAction } from "../actions";
 import { useActionToast } from "@/components/use-action-toast";
+import { ConfirmButton } from "@/components/confirm-button";
 
 type Item = {
   id: string;
@@ -39,19 +39,21 @@ export function QuizQuestionList({ quizId, items, canRecalc }: { quizId: string;
                 {it.options.map((o) => (
                   <li key={o.id} className="flex items-center gap-2">
                     {canRecalc && !o.isCorrect ? (
-                      <button
-                        type="button"
+                      <ConfirmButton
+                        variant="ghost"
+                        size="icon"
                         disabled={pending}
-                        className="text-muted-foreground hover:text-success"
+                        className="text-muted-foreground hover:text-success size-6"
                         aria-label={`Marcar "${o.text}" como correcta y recalcular`}
-                        title="Marcar como correcta y recalcular"
-                        onClick={() => {
-                          if (confirm(`¿Marcar "${o.text}" como la respuesta correcta? Se recalculan todos los cuestionarios que usan esta pregunta.`))
-                            run(() => changeCorrectAction(quizId, it.questionId, o.id), "Respuesta corregida y puntajes recalculados.");
-                        }}
+                        title={`¿Marcar “${o.text}” como la respuesta correcta?`}
+                        description="Se recalculan todos los cuestionarios que usan esta pregunta. Queda en auditoría."
+                        confirmLabel="Marcar como correcta"
+                        onConfirm={() =>
+                          run(() => changeCorrectAction(quizId, it.questionId, o.id), "Respuesta corregida y puntajes recalculados.")
+                        }
                       >
                         <Circle className="size-4" />
-                      </button>
+                      </ConfirmButton>
                     ) : o.isCorrect ? (
                       <CheckCircle2 className="size-4 text-success" aria-label="Correcta" />
                     ) : (
@@ -78,17 +80,24 @@ export function QuizQuestionList({ quizId, items, canRecalc }: { quizId: string;
                   <option value="false">Opciones: orden fijo</option>
                 </NativeSelect>
                 {canRecalc && (
-                  <Button
+                  <ConfirmButton
                     size="sm"
                     variant="outline"
                     disabled={pending}
-                    onClick={() => {
-                      if (confirm(it.voided ? "¿Restaurar esta pregunta?" : "¿Anular esta pregunta? No sumará ni restará para nadie."))
-                        run(() => voidQuestionAction(quizId, it.id, !it.voided), it.voided ? "Pregunta restaurada." : "Pregunta anulada.");
-                    }}
+                    title={it.voided ? "¿Restaurar esta pregunta?" : "¿Anular esta pregunta?"}
+                    description={
+                      it.voided
+                        ? "Vuelve a sumar y restar puntos. Se recalculan los puntajes."
+                        : "No sumará ni restará para nadie y su tiempo no cuenta. Se recalculan los puntajes."
+                    }
+                    confirmLabel={it.voided ? "Restaurar" : "Anular"}
+                    destructive={!it.voided}
+                    onConfirm={() =>
+                      run(() => voidQuestionAction(quizId, it.id, !it.voided), it.voided ? "Pregunta restaurada." : "Pregunta anulada.")
+                    }
                   >
                     {it.voided ? <RotateCcw /> : <Ban />} {it.voided ? "Restaurar" : "Anular"}
-                  </Button>
+                  </ConfirmButton>
                 )}
               </div>
             </li>

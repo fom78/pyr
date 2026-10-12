@@ -18,6 +18,12 @@ describe("can()", () => {
     expect(can(mod, "credits.adjust")).toBe(false);
     expect(can(mod, "question.autoApprove")).toBe(false);
   });
+  it("calendarios automáticos: solo admin los configura; el mod revisa y aprueba borradores", () => {
+    expect(can(admin, "schedule.manage")).toBe(true);
+    expect(can(mod, "schedule.manage")).toBe(false);
+    expect(can(mod, "quiz.manage")).toBe(true);
+    expect(can(mod, "quiz.publish")).toBe(true);
+  });
   it("mod banea solo si el admin lo habilita", () => {
     expect(can(mod, "user.ban")).toBe(false);
     expect(can(mod, "user.ban", { canBan: true })).toBe(true);

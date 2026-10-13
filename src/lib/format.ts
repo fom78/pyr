@@ -42,6 +42,12 @@ export function fromDateTimeInput(v: string, tz = DEFAULT_TZ): Date {
   return new Date(new TZDate(y, mo - 1, d, h, mi, 0, tz).getTime());
 }
 
+/** 72 → "72 horas (3 días)", 36 → "36 horas", 24 → "24 horas (1 día)". */
+export function formatHours(h: number) {
+  const days = h % 24 === 0 ? h / 24 : null;
+  return `${h} ${h === 1 ? "hora" : "horas"}${days ? ` (${days} ${days === 1 ? "día" : "días"})` : ""}`;
+}
+
 export function plural(n: number, one: string, many: string) {
   return `${n} ${n === 1 ? one : many}`;
 }

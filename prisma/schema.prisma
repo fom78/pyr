@@ -167,17 +167,16 @@ model RulesText {
 // ───────────────────────────── Contenido ─────────────────────────────
 
 model Category {
-  id            String   @id @default(cuid())
-  slug          String   @unique
-  name          String
-  description   String?
-  icon          String? // nombre de ícono lucide o emoji
-  imageKey      String?
-  active        Boolean  @default(true)
-  frequencyDays Int? // null = usa config global
-  settings      Json     @default("{}") // overrides de config por categoría
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String?
+  icon        String? // nombre de ícono lucide o emoji
+  imageKey    String?
+  active      Boolean  @default(true)
+  settings    Json     @default("{}") // overrides de config por categoría
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   questions   QuestionCategory[]
   quizzes     Quiz[]
@@ -332,6 +331,8 @@ model Quiz {
   createdById      String?
   createdBy        User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
   rankedAt         DateTime? // último recálculo de rankings disparado por este quiz
+  reviewNotifiedAt DateTime? // se avisó a los jugadores que ya pueden ver la corrección
+  openNotifiedAt   DateTime? // se avisó a los miembros de la categoría que abrió
   // Generado por un calendario automático: un borrador por turno (slotAt = apertura prevista).
   scheduleId       String?
   schedule         QuizSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
@@ -350,19 +351,21 @@ model Quiz {
 
 /// Calendario fijo de una categoría: el worker genera borradores por adelantado para cada turno.
 model QuizSchedule {
-  id            String     @id @default(cuid())
-  categoryId    String     @unique
-  category      Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  enabled       Boolean    @default(true)
-  weekdays      Int[] // 0 = domingo … 6 = sábado
-  timeOfDay     String // "HH:mm" en `timezone`
-  timezone      String     @default("America/Argentina/Buenos_Aires")
-  titleTemplate String     @default("{categoria} · {fecha}")
-  difficultyMix Json? // { "1": 2, "3": 1 } = cantidad por dificultad; null = sin restricción
-  timeMode      TimeMode   @default(PER_QUESTION)
-  skippedSlots  DateTime[] // turnos salteados a mano: no se vuelven a generar
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id               String     @id @default(cuid())
+  categoryId       String     @unique
+  category         Category   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  enabled          Boolean    @default(true)
+  // Grilla de turnos: turno N = anchorAt + N × frequencyHours (con frecuencias múltiplo de 24, a la misma hora local).
+  anchorAt         DateTime
+  frequencyHours   Int        @default(24)
+  excludedWeekdays Int[] // 0 = domingo … 6 = sábado, en `timezone`: esos turnos no se publican (la grilla no se corre)
+  timezone         String     @default("America/Argentina/Buenos_Aires")
+  titleTemplate    String     @default("{categoria} · {fecha}")
+  difficultyMix    Json? // { "1": 2, "3": 1 } = cantidad por dificultad; null = sin restricción
+  timeMode         TimeMode   @default(PER_QUESTION)
+  skippedSlots     DateTime[] // turnos salteados a mano: no se vuelven a generar
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 
   quizzes Quiz[]
 }
@@ -651,11 +654,18 @@ enum NotificationLevel {
   CRITICAL
 }
 
+/// STAFF = avisos del panel (admins y mods) · PLAYER = avisos del juego.
+enum NotificationAudience {
+  STAFF
+  PLAYER
+}
+
 /// Avisos dentro de la app (hoy solo para admins y mods).
 model Notification {
-  id        String            @id @default(cuid())
+  id        String               @id @default(cuid())
   userId    String
-  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  audience  NotificationAudience @default(STAFF)
   level     NotificationLevel
   kind      String // "bank.coverage", "draft.pending", "draft.incomplete", "draft.skipped"
   title     String
@@ -663,8 +673,8 @@ model Notification {
   href      String?
   dedupeKey String // evita repetir el mismo aviso
   readAt    DateTime?
-  createdAt DateTime          @default(now())
+  createdAt DateTime             @default(now())
 
   @@unique([userId, dedupeKey])
-  @@index([userId, readAt])
+  @@index([userId, audience, readAt])
 }

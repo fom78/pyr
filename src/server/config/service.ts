@@ -28,14 +28,12 @@ export function invalidateSettingsCache() {
 
 /** Config efectiva para una categoría: global + overrides permitidos de la categoría. */
 export async function getCategorySettings(
-  category: { settings: unknown; frequencyDays?: number | null },
+  category: { settings: unknown },
   db: Db = prisma,
 ): Promise<Settings> {
   const global = await getSettings(db);
   const overrides = (category.settings ?? {}) as Record<string, unknown>;
-  const merged = mergeSettings(global, overrides, categoryOverridableKeys);
-  if (category.frequencyDays) merged["quiz.frequencyDays"] = category.frequencyDays;
-  return merged;
+  return mergeSettings(global, overrides, categoryOverridableKeys);
 }
 
 export async function setSetting<K extends SettingKey>(key: K, value: unknown, actorId: string, db: Db = prisma) {

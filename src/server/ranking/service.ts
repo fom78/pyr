@@ -1,3 +1,4 @@
+import { countsForTableUntil } from "@/server/quiz/status";
 import { prisma, type Db } from "@/server/db";
 import { getCategorySettings } from "@/server/config/service";
 import { activeBanWhere } from "@/server/users/bans";
@@ -41,7 +42,12 @@ export function countedLeagueQuizzes(categoryId: string, windowDays: number, now
  * Impacto de un intento de liga en la tabla: puesto actual del usuario y si ese puntaje
  * quedó entre sus K mejores.
  */
-export async function leagueImpact(attempt: { id: string; userId: string }, categoryId: string, now = new Date(), db: Db = prisma) {
+export async function leagueImpact(
+  attempt: { id: string; userId: string; quiz: { closesAt: Date; expiresAt: Date } },
+  categoryId: string,
+  now = new Date(),
+  db: Db = prisma,
+) {
   const category = await db.category.findUnique({ where: { id: categoryId } });
   if (!category) return null;
   const s = await getCategorySettings(category, db);
@@ -58,6 +64,8 @@ export async function leagueImpact(attempt: { id: string; userId: string }, cate
     standing,
     bestK: s["ranking.bestK"],
     counts: best.some((a) => a.id === attempt.id),
+    /** Hasta cuándo este cuestionario cuenta para la tabla. */
+    countsUntil: countsForTableUntil(attempt.quiz, s["ranking.windowDays"]),
     participants: await db.categoryStanding.count({ where: { categoryId } }),
   };
 }

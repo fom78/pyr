@@ -31,7 +31,6 @@ type Props = {
     imageKey: string | null;
     imageUrl: string | null;
     active: boolean;
-    frequencyDays: number | null;
     settings: Record<string, unknown>;
   };
   overrides: OverrideField[];
@@ -52,15 +51,6 @@ export function CategoryForm({ id, initial, overrides }: Props) {
           <Field label="Nombre" name="name" required defaultValue={initial?.name} errors={fe?.name} />
           <Field label="Identificador (slug)" name="slug" defaultValue={initial?.slug} errors={fe?.slug} hint="Se usa en la URL. Si lo dejás vacío se genera solo." />
           <Field label="Ícono (emoji)" name="icon" defaultValue={initial?.icon ?? ""} maxLength={16} />
-          <Field
-            label="Frecuencia de publicación (días)"
-            name="frequencyDays"
-            type="number"
-            min={1}
-            max={60}
-            defaultValue={initial?.frequencyDays ?? ""}
-            hint="Vacío = usa el valor global."
-          />
           <div className="grid gap-1.5 sm:col-span-2">
             <Label htmlFor="description">Descripción</Label>
             <Textarea id="description" name="description" defaultValue={initial?.description ?? ""} maxLength={500} />

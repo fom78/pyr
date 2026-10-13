@@ -9,14 +9,14 @@ import {
   notifyCoverage,
   regenerateDraft,
   replaceQuestion,
+  rescueSlots,
   saveSchedule,
 } from "@/server/autoquiz/service";
-import { deleteDraftQuiz, publishQuiz } from "@/server/quiz/service";
+import { createQuiz, deleteDraftQuiz, publishQuiz } from "@/server/quiz/service";
 import { banUser } from "@/server/users/service";
 import { hasDb, makeCategory, makeQuestions, makeUser, resetDb } from "./helpers";
 
 const DAY = 86_400_000;
-const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 
 async function setup(opts: { questions: number; perQuiz?: number }) {
   const admin = await makeUser("ADMIN");
@@ -29,8 +29,9 @@ async function setup(opts: { questions: number; perQuiz?: number }) {
     cat.id,
     {
       enabled: true,
-      weekdays: ALL_DAYS,
-      timeOfDay: "20:00",
+      anchorAt: "2025-01-01T20:00",
+      frequencyHours: 24,
+      excludedWeekdays: [],
       titleTemplate: "{categoria} #{n}",
       difficultyMix: null,
       timeMode: "PER_QUESTION",
@@ -168,6 +169,40 @@ describe.skipIf(!hasDb)("cuestionarios automáticos", () => {
     expect(after[0].questions.map((q) => q.questionId)).toEqual(before[0].questions.map((q) => q.questionId));
   });
 
+  it("un cuestionario manual asignado a un turno reemplaza al borrador automático; fuera de la grilla se rechaza", async () => {
+    const { admin, cat } = await setup({ questions: 30 });
+    await generateDrafts();
+    const [auto] = await drafts(cat.id);
+    const slotAt = auto.slotAt!;
+    const base = {
+      title: "Manual del turno",
+      categoryId: cat.id,
+      opensAt: slotAt,
+      closesAt: new Date(slotAt.getTime() + 3 * DAY),
+      expiresAt: new Date(slotAt.getTime() + 30 * DAY),
+      timeMode: "PER_QUESTION",
+      timeLimitSec: 20,
+      shuffleQuestions: false,
+      shuffleOptions: false,
+      scoring: { base: 100, timeBonus: 50, wrongPenalty: 0 },
+    };
+    await expect(createQuiz({ ...base, opensAt: new Date(slotAt.getTime() + 3_600_000) }, admin, { slotAt })).rejects.toThrow(
+      /tiene que coincidir/,
+    );
+    const off = new Date(slotAt.getTime() + 5 * 3_600_000);
+    await expect(createQuiz({ ...base, opensAt: off }, admin, { slotAt: off })).rejects.toThrow(/no es un turno/);
+
+    const manual = await createQuiz(base, admin, { slotAt });
+    expect(manual).toMatchObject({ scheduleId: auto.scheduleId, slotAt, shuffleQuestions: true, shuffleOptions: true });
+    expect(await prisma.quiz.findUnique({ where: { id: auto.id } })).toBeNull();
+    // El turno ya está ocupado: otro manual no puede pisarlo y el generador no lo vuelve a crear.
+    await expect(createQuiz(base, admin, { slotAt })).rejects.toThrow(/ya tiene un cuestionario/);
+    expect((await generateDrafts()).created).toBe(0);
+    // Al llegar la apertura sin publicar, el manual no se borra: queda suelto como borrador.
+    await handleDueDrafts(new Date(slotAt.getTime() + 1000));
+    expect(await prisma.quiz.findUnique({ where: { id: manual.id } })).toMatchObject({ scheduleId: null, slotAt: null });
+  });
+
   it("publicar un cuestionario de liga exige la cantidad fija de preguntas", async () => {
     const { admin, cat, questions } = await setup({ questions: 5, perQuiz: 3 });
     const quiz = await prisma.quiz.create({
@@ -204,5 +239,31 @@ describe.skipIf(!hasDb)("cuestionarios automáticos", () => {
 
     // Mismo día: no se repite.
     expect((await notifyCoverage()).sent).toBe(0);
+  });
+  it("rescate: un turno urgente sin cuestionario se arma y publica solo, solo con el switch y si alcanzan las preguntas", async () => {
+    const { cat } = await setup({ questions: 5 });
+    // alertHours = 24: hay exactamente un turno diario dentro de la ventana, y el generador no lo crea.
+    const urgent = () =>
+      prisma.quiz.findMany({ where: { categoryId: cat.id, opensAt: { lte: new Date(Date.now() + DAY) } }, include: { questions: true } });
+    expect(await urgent()).toHaveLength(0);
+
+    expect(await rescueSlots()).toEqual({ rescued: 0 }); // switch apagado (default)
+    await prisma.category.update({ where: { id: cat.id }, data: { settings: { "autoquiz.rescueSlots": true } } });
+
+    const rescued = await rescueSlots();
+    expect(rescued.rescued).toBe(1);
+    const [quiz] = await urgent();
+    expect(quiz.publishedAt).not.toBeNull();
+    expect(quiz.slotAt).not.toBeNull();
+    expect(quiz.questions).toHaveLength(3);
+    expect(await prisma.notification.count({ where: { kind: "slot.rescued" } })).toBeGreaterThan(0);
+    expect(await rescueSlots()).toEqual({ rescued: 0 }); // idempotente
+
+    // Sin preguntas suficientes no se arma nada (se borra el rescatado para liberar el turno).
+    await prisma.quiz.deleteMany({ where: { categoryId: cat.id } });
+    await prisma.question.deleteMany({ where: { categories: { some: { categoryId: cat.id } } } });
+    await makeQuestions(cat.id, 2);
+    expect(await rescueSlots()).toEqual({ rescued: 0 });
+    expect(await urgent()).toHaveLength(0);
   });
 });

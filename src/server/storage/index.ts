@@ -40,6 +40,19 @@ export function fileUrl(key: string | null | undefined): string | null {
   return storage().url(key);
 }
 
+/** Key de la variante chica de una portada: "covers/…/abc.webp" → "covers/…/abc-sm.webp". */
+export function smallVariantKey(key: string) {
+  return key.replace(/\.webp$/, "-sm.webp");
+}
+
+/** src + srcSet de una portada (1200 y 600 de ancho) para usar con `sizes`. */
+export function coverImage(key: string | null | undefined): { src: string; srcSet?: string } | null {
+  const src = fileUrl(key);
+  if (!src || !key) return null;
+  if (/^https?:\/\//.test(key) || !key.endsWith(".webp")) return { src };
+  return { src, srcSet: `${storage().url(smallVariantKey(key))} 600w, ${src} 1200w` };
+}
+
 export function newKey(folder: string, ext: string) {
   const d = new Date();
   const month = `${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, "0")}`;

@@ -8,10 +8,11 @@ import { logAudit } from "@/server/audit";
 import { logger } from "@/server/logger";
 import { buildQuestionWhere } from "@/server/questions/service";
 import { notifyStaff } from "@/server/notifications/service";
+import { weekKey } from "@/server/notifications/weekly";
 import { publishQuiz } from "@/server/quiz/service";
 import { getQuizStatus } from "@/server/quiz/status";
-import { DEFAULT_TZ, formatDate, formatDateTime } from "@/lib/format";
-import { TIME_OF_DAY, upcomingSlots } from "./slots";
+import { DEFAULT_TZ, formatDate, formatDateTime, fromDateTimeInput } from "@/lib/format";
+import { gridSlots, upcomingSlots } from "./slots";
 import { mixTotal, pickQuestions, remainingMix, type DifficultyMix, type FreshCandidate, type ReusableCandidate } from "./pick";
 import { projectCoverage, type Coverage } from "./coverage";
 import { renderTitle } from "./title";
@@ -27,8 +28,16 @@ export const SYSTEM_ACTOR = { id: null } as const;
 
 export const scheduleInput = z.object({
   enabled: z.boolean(),
-  weekdays: z.array(z.coerce.number().int().min(0).max(6)).min(1, "Elegí al menos un día."),
-  timeOfDay: z.string().regex(TIME_OF_DAY, "Hora inválida (HH:mm)."),
+  /** Primer turno, como datetime-local ("yyyy-MM-ddTHH:mm") en `timezone`. */
+  anchorAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, "Elegí fecha y hora del primer turno."),
+  frequencyHours: z.coerce
+    .number()
+    .int("La frecuencia va en horas enteras.")
+    .min(1, "La frecuencia mínima es 1 hora.")
+    .max(24 * 14, "La frecuencia máxima es de 14 días (336 h)."),
+  excludedWeekdays: z
+    .array(z.coerce.number().int().min(0).max(6))
+    .refine((d) => new Set(d).size < 7, "No se pueden excluir todos los días."),
   timezone: z.string().trim().min(1).default(DEFAULT_TZ),
   titleTemplate: z.string().trim().min(2, "Poné una plantilla de título.").max(120),
   difficultyMix: z.record(z.string().regex(/^[1-5]$/), z.coerce.number().int().min(0).max(100)).nullable(),
@@ -55,8 +64,9 @@ export async function saveSchedule(categoryId: string, raw: unknown, actor: { id
     throw new UserError(`La mezcla de dificultad suma más que las ${s["quiz.questionCount"]} preguntas por cuestionario.`);
   const data = {
     enabled: input.enabled,
-    weekdays: [...new Set(input.weekdays)].sort(),
-    timeOfDay: input.timeOfDay,
+    anchorAt: fromDateTimeInput(input.anchorAt, input.timezone),
+    frequencyHours: input.frequencyHours,
+    excludedWeekdays: [...new Set(input.excludedWeekdays)].sort(),
     timezone: input.timezone,
     titleTemplate: input.titleTemplate,
     difficultyMix: mix ?? Prisma.DbNull,
@@ -70,7 +80,11 @@ export async function saveSchedule(categoryId: string, raw: unknown, actor: { id
     schedule.enabled ? upcomingSlots(schedule, now, new Date(now.getTime() + 366 * DAY)).map((d) => d.getTime()) : [],
   );
   const stale = drafts.filter((q) => !valid.has(q.slotAt!.getTime()));
-  if (stale.length) await db.quiz.deleteMany({ where: { id: { in: stale.map((q) => q.id) } } });
+  // Los automáticos se descartan; los manuales asignados a un turno quedan como borradores sueltos.
+  const staleAuto = stale.filter((q) => !q.createdById).map((q) => q.id);
+  const staleManual = stale.filter((q) => q.createdById).map((q) => q.id);
+  if (staleAuto.length) await db.quiz.deleteMany({ where: { id: { in: staleAuto } } });
+  if (staleManual.length) await db.quiz.updateMany({ where: { id: { in: staleManual } }, data: { scheduleId: null, slotAt: null } });
 
   await logAudit(
     {
@@ -131,10 +145,82 @@ async function generateForSchedule(schedule: ScheduleWithCategory, now: Date, db
   const s = await settingsFor(schedule.category, db);
   const from = new Date(now.getTime() + s["autoquiz.alertHours"] * HOUR);
   const until = new Date(now.getTime() + s["autoquiz.horizonDays"] * DAY);
+  const missingSlots = await freeSlots(schedule, from, until, db);
+  if (!missingSlots.length) return { created: 0, incomplete: 0 };
+
+  let pools = await loadCandidates(schedule.categoryId, s, now, db);
+  const count = s["quiz.questionCount"];
+  const mix = schedule.difficultyMix as DifficultyMix | null;
+  let created = 0;
+  let incomplete = 0;
+  for (const slotAt of missingSlots) {
+    const { picks, missing } = pickQuestions(pools, count, mix, { allowReuse: s["autoquiz.allowReuse"] });
+    const ids = new Set(picks.map((p) => p.id));
+    pools = { fresh: removePicked(pools.fresh, ids), reusable: removePicked(pools.reusable, ids) };
+    const quiz = await createSlotQuiz(schedule, slotAt, picks, s, db, { missing });
+    if (!quiz) continue;
+    created++;
+    if (missing) incomplete++;
+  }
+  return { created, incomplete };
+}
+
+/**
+ * Crea el cuestionario de un turno con las preguntas elegidas. Devuelve null si otra corrida
+ * ya creó ese turno en paralelo (el índice único `[scheduleId, slotAt]` lo impide).
+ */
+async function createSlotQuiz(
+  schedule: ScheduleWithCategory,
+  slotAt: Date,
+  picks: { id: string; reused: boolean }[],
+  s: Settings,
+  db: Db,
+  meta: Record<string, unknown>,
+) {
+  const closesAt = new Date(slotAt.getTime() + s["quiz.activeHours"] * HOUR);
+  const n = (await leagueQuizCount(schedule.categoryId, slotAt, db)) + 1;
+  try {
+    const quiz = await db.quiz.create({
+      data: {
+        title: renderTitle(schedule.titleTemplate, {
+          categoria: schedule.category.name,
+          fecha: formatDate(slotAt, schedule.timezone, "EEE d/M"),
+          n,
+        }),
+        categoryId: schedule.categoryId,
+        opensAt: slotAt,
+        closesAt,
+        expiresAt: new Date(closesAt.getTime() + s["quiz.computableDays"] * DAY),
+        timeMode: schedule.timeMode,
+        timeLimitSec: s["quiz.timeLimitSec"],
+        scoring: { base: s["scoring.base"], timeBonus: s["scoring.timeBonus"], wrongPenalty: s["scoring.wrongPenalty"] },
+        scheduleId: schedule.id,
+        slotAt,
+        questions: { create: picks.map((p, position) => ({ questionId: p.id, position, reused: p.reused })) },
+      },
+    });
+    await logAudit(
+      {
+        actorId: null,
+        action: "quiz.autoCreate",
+        entityType: "Quiz",
+        entityId: quiz.id,
+        meta: { slotAt, reused: picks.filter((p) => p.reused).length, ...meta },
+      },
+      db,
+    );
+    return quiz;
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") return null;
+    throw err;
+  }
+}
+
+/** Turnos de un calendario entre `from` y `until` que no tienen cuestionario (ni salteados ni excluidos). */
+async function freeSlots(schedule: ScheduleWithCategory, from: Date, until: Date, db: Db) {
   const skipped = new Set(schedule.skippedSlots.map((d) => d.getTime()));
   const slots = upcomingSlots(schedule, from, until).filter((d) => !skipped.has(d.getTime()));
-  if (!slots.length) return { created: 0, incomplete: 0 };
-
+  if (!slots.length) return [];
   const existing = await db.quiz.findMany({
     where: {
       categoryId: schedule.categoryId,
@@ -149,59 +235,59 @@ async function generateForSchedule(schedule: ScheduleWithCategory, now: Date, db
         ? q.slotAt?.getTime() === slot.getTime()
         : Math.abs(q.opensAt.getTime() - slot.getTime()) < MANUAL_CLASH_MS,
     );
-  const missingSlots = slots.filter((slot) => !taken(slot));
-  if (!missingSlots.length) return { created: 0, incomplete: 0 };
+  return slots.filter((slot) => !taken(slot));
+}
 
-  let pools = await loadCandidates(schedule.categoryId, s, now, db);
-  const count = s["quiz.questionCount"];
-  const mix = schedule.difficultyMix as DifficultyMix | null;
-  let created = 0;
-  let incomplete = 0;
-  for (const slotAt of missingSlots) {
-    const { picks, missing } = pickQuestions(pools, count, mix, { allowReuse: s["autoquiz.allowReuse"] });
-    const ids = new Set(picks.map((p) => p.id));
-    pools = { fresh: removePicked(pools.fresh, ids), reusable: removePicked(pools.reusable, ids) };
-    const closesAt = new Date(slotAt.getTime() + s["quiz.activeDays"] * DAY);
-    const n = (await leagueQuizCount(schedule.categoryId, slotAt, db)) + 1;
-    try {
-      const quiz = await db.quiz.create({
-        data: {
-          title: renderTitle(schedule.titleTemplate, {
-            categoria: schedule.category.name,
-            fecha: formatDate(slotAt, schedule.timezone, "EEE d/M"),
-            n,
-          }),
-          categoryId: schedule.categoryId,
-          opensAt: slotAt,
-          closesAt,
-          expiresAt: new Date(closesAt.getTime() + s["quiz.computableDays"] * DAY),
-          timeMode: schedule.timeMode,
-          timeLimitSec: s["quiz.timeLimitSec"],
-          scoring: { base: s["scoring.base"], timeBonus: s["scoring.timeBonus"], wrongPenalty: s["scoring.wrongPenalty"] },
-          scheduleId: schedule.id,
-          slotAt,
-          questions: { create: picks.map((p, position) => ({ questionId: p.id, position, reused: p.reused })) },
-        },
+/**
+ * Rescate (`autoquiz.rescueSlots`): un turno ya dentro de `alertHours` sin cuestionario (el generador
+ * no lo va a crear) se arma con preguntas del banco y se publica en el acto. Solo si alcanzan para
+ * completarlo; si no, queda el aviso `slot.unassigned`.
+ */
+export async function rescueSlots(now = new Date(), db: Db = prisma) {
+  const schedules = await db.quizSchedule.findMany({
+    where: { enabled: true, category: { active: true } },
+    include: { category: true },
+  });
+  let rescued = 0;
+  for (const schedule of schedules) {
+    const s = await settingsFor(schedule.category, db);
+    if (!s["autoquiz.rescueSlots"]) continue;
+    const slots = await freeSlots(schedule, now, new Date(now.getTime() + s["autoquiz.alertHours"] * HOUR), db);
+    if (!slots.length) continue;
+    let pools = await loadCandidates(schedule.categoryId, s, now, db);
+    for (const slotAt of slots) {
+      const { picks, missing } = pickQuestions(pools, s["quiz.questionCount"], schedule.difficultyMix as DifficultyMix | null, {
+        allowReuse: s["autoquiz.allowReuse"],
       });
-      created++;
-      if (missing) incomplete++;
-      await logAudit(
+      if (missing) break; // no alcanzan: los turnos siguientes tampoco
+      const ids = new Set(picks.map((p) => p.id));
+      pools = { fresh: removePicked(pools.fresh, ids), reusable: removePicked(pools.reusable, ids) };
+      const quiz = await createSlotQuiz(schedule, slotAt, picks, s, db, { rescue: true });
+      if (!quiz) continue;
+      try {
+        await publishQuiz(quiz.id, SYSTEM_ACTOR, now);
+      } catch (err) {
+        if (!(err instanceof UserError)) throw err;
+        logger.warn({ quizId: quiz.id, err: err.message }, "no se pudo publicar el turno rescatado");
+        continue;
+      }
+      rescued++;
+      await notifyStaff(
         {
-          actorId: null,
-          action: "quiz.autoCreate",
-          entityType: "Quiz",
-          entityId: quiz.id,
-          meta: { slotAt, missing, reused: picks.filter((p) => p.reused).length },
+          level: "INFO",
+          kind: "slot.rescued",
+          title: `${schedule.category.name}: se armó solo un cuestionario`,
+          body: `El turno del ${formatDateTime(slotAt)} no tenía cuestionario: se armó “${quiz.title}” con preguntas del banco y se publicó. Hasta que abra lo podés revisar o despublicar.`,
+          href: `/admin/cuestionarios/${quiz.id}`,
+          dedupeKey: `slot.rescued:${quiz.id}`,
         },
+        now,
         db,
       );
-    } catch (err) {
-      // Otra corrida generó el mismo turno en paralelo: el índice único lo impide y seguimos.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") continue;
-      throw err;
     }
   }
-  return { created, incomplete };
+  if (rescued) logger.info({ rescued }, "turnos rescatados");
+  return { rescued };
 }
 
 /** Mantiene generados los borradores de todos los calendarios habilitados. */
@@ -239,7 +325,9 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
     if (!quiz.category) continue;
     const s = await settingsFor(quiz.category, db);
     if (quiz.opensAt <= now) {
-      await db.quiz.delete({ where: { id: quiz.id } });
+      // Un borrador automático se descarta; uno cargado a mano se suelta del turno y queda como borrador.
+      if (quiz.createdById) await db.quiz.update({ where: { id: quiz.id }, data: { scheduleId: null, slotAt: null } });
+      else await db.quiz.delete({ where: { id: quiz.id } });
       skipped++;
       await logAudit({ actorId: null, action: "quiz.autoSkipped", entityType: "Quiz", entityId: quiz.id, before: quiz }, db);
       await notifyStaff(
@@ -247,7 +335,9 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
           level: "WARNING",
           kind: "draft.skipped",
           title: `${quiz.category.name}: se salteó un cuestionario`,
-          body: `El borrador “${quiz.title}” llegó a su apertura (${formatDateTime(quiz.opensAt)}) sin aprobar y se descartó.`,
+          body: `El borrador “${quiz.title}” llegó a su apertura (${formatDateTime(quiz.opensAt)}) sin aprobar${
+            quiz.createdById ? "; quedó como borrador suelto." : " y se descartó."
+          }`,
           href: "/admin/cuestionarios/por-aprobar",
           dedupeKey: `draft.skipped:${quiz.id}`,
         },
@@ -289,6 +379,16 @@ export function autoPublishAt(opensAt: Date, s: Settings) {
 
 // ───────────────────────────── Cobertura del banco ─────────────────────────────
 
+export type UpcomingSlot = {
+  at: Date;
+  /** pending = todavía sin cuestionario · excluded = día excluido · skipped = salteado a mano */
+  status: "published" | "draft" | "pending" | "excluded" | "skipped";
+  questions: number;
+  quiz: { id: string; title: string } | null;
+  /** Sin cuestionario y ya dentro de la ventana de alerta (el generador no lo crea; solo el rescate, si está activo). */
+  urgent: boolean;
+};
+
 export type BankCoverage = {
   categoryId: string;
   categoryName: string;
@@ -298,10 +398,13 @@ export type BankCoverage = {
   reservedInDrafts: number;
   freshByDifficulty: Record<number, number>;
   mix: DifficultyMix | null;
-  upcoming: { at: Date; status: "published" | "draft" | "pending"; questions: number }[];
+  upcoming: UpcomingSlot[];
   warnDays: number;
   criticalDays: number;
   coverage: Coverage;
+  computedAt: Date;
+  /** `autoquiz.rescueSlots`: los turnos urgentes sin cuestionario se arman solos si alcanzan las preguntas. */
+  rescue: boolean;
 };
 
 /** Para cuántos turnos futuros alcanzan las preguntas nunca usadas (y con reutilizadas). */
@@ -310,25 +413,45 @@ export async function bankCoverage(schedule: ScheduleWithCategory, now = new Dat
   const warnDays = s["autoquiz.coverageWarnDays"];
   const until = new Date(now.getTime() + Math.max(s["autoquiz.horizonDays"], warnDays) * DAY);
   const skipped = new Set(schedule.skippedSlots.map((d) => d.getTime()));
-  const slotDates = schedule.enabled ? upcomingSlots(schedule, now, until).filter((d) => !skipped.has(d.getTime())) : [];
-  const quizzes = await db.quiz.findMany({
-    where: { scheduleId: schedule.id, slotAt: { gt: now, lte: until } },
-    select: { slotAt: true, publishedAt: true, _count: { select: { questions: true } } },
-  });
-  const bySlot = new Map(quizzes.map((q) => [q.slotAt!.getTime(), q]));
+  const grid = schedule.enabled ? gridSlots(schedule, now, until) : [];
+  const quizzes = grid.length
+    ? await db.quiz.findMany({
+        where: {
+          categoryId: schedule.categoryId,
+          tournamentId: null,
+          opensAt: { gte: new Date(grid[0].at.getTime() - MANUAL_CLASH_MS), lte: new Date(until.getTime() + MANUAL_CLASH_MS) },
+        },
+        select: { id: true, title: true, scheduleId: true, slotAt: true, opensAt: true, publishedAt: true, _count: { select: { questions: true } } },
+      })
+    : [];
+  const quizFor = (at: Date) =>
+    quizzes.find((q) => q.scheduleId === schedule.id && q.slotAt?.getTime() === at.getTime()) ??
+    quizzes.find((q) => !q.slotAt && Math.abs(q.opensAt.getTime() - at.getTime()) < MANUAL_CLASH_MS);
+  const alertUntil = now.getTime() + s["autoquiz.alertHours"] * HOUR;
   const perQuiz = s["quiz.questionCount"];
-  const upcoming = slotDates.map((at) => {
-    const q = bySlot.get(at.getTime());
+  const upcoming: UpcomingSlot[] = grid.map(({ at, excluded }) => {
+    const q = excluded ? undefined : quizFor(at);
+    const status = excluded
+      ? "excluded"
+      : q
+        ? q.publishedAt
+          ? "published"
+          : "draft"
+        : skipped.has(at.getTime())
+          ? "skipped"
+          : "pending";
     return {
       at,
-      status: q ? (q.publishedAt ? ("published" as const) : ("draft" as const)) : ("pending" as const),
+      status,
       questions: q?._count.questions ?? 0,
+      quiz: q ? { id: q.id, title: q.title } : null,
+      urgent: status === "pending" && at.getTime() <= alertUntil,
     };
   });
   const { fresh, reusable } = await loadCandidates(schedule.categoryId, s, now, db);
   const freshByDifficulty: Record<number, number> = {};
   for (const q of fresh) freshByDifficulty[q.difficulty] = (freshByDifficulty[q.difficulty] ?? 0) + 1;
-  const pending = upcoming.filter((u) => u.status !== "published");
+  const pending = upcoming.filter((u) => u.status === "draft" || u.status === "pending");
   return {
     categoryId: schedule.categoryId,
     categoryName: schedule.category.name,
@@ -339,6 +462,8 @@ export async function bankCoverage(schedule: ScheduleWithCategory, now = new Dat
     freshByDifficulty,
     mix: schedule.difficultyMix as DifficultyMix | null,
     upcoming,
+    computedAt: now,
+    rescue: s["autoquiz.rescueSlots"],
     warnDays,
     criticalDays: s["autoquiz.coverageCriticalDays"],
     coverage: projectCoverage({
@@ -360,13 +485,6 @@ export async function listBankCoverage(now = new Date(), db: Db = prisma) {
     orderBy: { category: { name: "asc" } },
   });
   return Promise.all(schedules.map((sch) => bankCoverage(sch, now, db)));
-}
-
-/** Lunes (UTC) de la semana de `now`: un aviso de cobertura por semana y nivel. */
-function weekKey(now: Date) {
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
 }
 
 export function coverageMessage(c: BankCoverage) {
@@ -470,7 +588,73 @@ export async function notifyDrafts(now = new Date(), db: Db = prisma) {
         db,
       );
   }
+
+  // Turnos sin cuestionario ya dentro de la ventana de alerta: el generador no los va a crear.
+  for (const slot of await unreadySlots(now, undefined, db)) {
+    if (slot.quiz) continue;
+    sent += await notifyStaff(
+      {
+        level: "CRITICAL",
+        kind: "slot.unassigned",
+        title: `${slot.categoryName}: turno sin cuestionario`,
+        body: `El turno del ${formatDateTime(slot.at)} no tiene cuestionario. Asignale uno o se va a perder.`,
+        href: `/admin/cuestionarios/nuevo?ref=c:${slot.categoryId}&turno=${slot.at.toISOString()}`,
+        dedupeKey: `slot.unassigned:${slot.categoryId}:${slot.at.toISOString()}`,
+      },
+      now,
+      db,
+    );
+  }
   return { sent };
+}
+
+export type UnreadySlot = {
+  categoryId: string;
+  categoryName: string;
+  at: Date;
+  /** null = sin cuestionario; si no, un borrador sin publicar o incompleto. */
+  quiz: { id: string; title: string; questions: number; published: boolean } | null;
+};
+
+/**
+ * Turnos de las próximas `hours` horas (default `autoquiz.alertHours` de cada categoría) que no tienen
+ * un cuestionario listo: sin asignar, borrador sin aprobar o con preguntas de menos.
+ */
+export async function unreadySlots(now = new Date(), hours?: number, db: Db = prisma): Promise<UnreadySlot[]> {
+  const schedules = await db.quizSchedule.findMany({
+    where: { enabled: true, category: { active: true } },
+    include: { category: true },
+  });
+  const out: UnreadySlot[] = [];
+  for (const schedule of schedules) {
+    const s = await settingsFor(schedule.category, db);
+    const until = new Date(now.getTime() + (hours ?? s["autoquiz.alertHours"]) * HOUR);
+    const skipped = new Set(schedule.skippedSlots.map((d) => d.getTime()));
+    const slots = upcomingSlots(schedule, now, until).filter((d) => !skipped.has(d.getTime()));
+    if (!slots.length) continue;
+    const quizzes = await db.quiz.findMany({
+      where: {
+        categoryId: schedule.categoryId,
+        tournamentId: null,
+        opensAt: { gte: new Date(slots[0].getTime() - MANUAL_CLASH_MS), lte: new Date(until.getTime() + MANUAL_CLASH_MS) },
+      },
+      select: { id: true, title: true, scheduleId: true, slotAt: true, opensAt: true, publishedAt: true, _count: { select: { questions: true } } },
+    });
+    for (const at of slots) {
+      const q =
+        quizzes.find((x) => x.scheduleId === schedule.id && x.slotAt?.getTime() === at.getTime()) ??
+        quizzes.find((x) => !x.slotAt && Math.abs(x.opensAt.getTime() - at.getTime()) < MANUAL_CLASH_MS);
+      const ready = q && q.publishedAt && q._count.questions >= s["quiz.questionCount"];
+      if (ready) continue;
+      out.push({
+        categoryId: schedule.categoryId,
+        categoryName: schedule.category.name,
+        at,
+        quiz: q ? { id: q.id, title: q.title, questions: q._count.questions, published: !!q.publishedAt } : null,
+      });
+    }
+  }
+  return out.sort((a, b) => a.at.getTime() - b.at.getTime());
 }
 
 // ───────────────────────────── Acciones manuales ─────────────────────────────

@@ -243,7 +243,14 @@ async function seedDemo(adminId: string) {
   });
   // Calendario automático de ejemplo (deshabilitado: se activa desde la categoría).
   await prisma.quizSchedule.create({
-    data: { categoryId: categories.futbol.id, enabled: false, weekdays: [1, 3, 5], timeOfDay: "20:00", titleTemplate: "{categoria} #{n}" },
+    data: {
+      categoryId: categories.futbol.id,
+      enabled: false,
+      anchorAt: at(DAY),
+      frequencyHours: 24,
+      excludedWeekdays: [0],
+      titleTemplate: "{categoria} #{n}",
+    },
   });
 
   // Torneo

@@ -46,8 +46,9 @@ export async function saveQuizAction(id: string | null, _prev: FormState, fd: Fo
   try {
     const user = await authorize("quiz.manage");
     const data = parseQuizForm(fd, user.timezone);
+    const slot = fd.get("slotAt");
     if (id) await updateQuiz(id, data, user);
-    else target = (await createQuiz(data, user)).id;
+    else target = (await createQuiz(data, user, { slotAt: slot ? new Date(String(slot)) : undefined })).id;
     revalidatePath("/admin/cuestionarios");
   } catch (err) {
     return toFormState(err, values);

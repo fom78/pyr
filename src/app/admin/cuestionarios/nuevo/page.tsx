@@ -2,30 +2,36 @@ import { requirePermission } from "@/server/auth/session";
 import { suggestQuizDefaults } from "@/server/quiz/service";
 import { prisma } from "@/server/db";
 import { PageHeader } from "@/components/common";
-import { toDateTimeInput } from "@/lib/format";
+import { formatDateTime, toDateTimeInput } from "@/lib/format";
 import { readScoring } from "@/server/scoring/attempt";
 import { QuizForm } from "../quiz-form";
 import { quizRefOptions } from "../refs";
 
 export const metadata = { title: "Nuevo cuestionario" };
 
-export default async function NewQuizPage({ searchParams }: { searchParams: Promise<{ ref?: string }> }) {
+export default async function NewQuizPage({ searchParams }: { searchParams: Promise<{ ref?: string; turno?: string }> }) {
   const user = await requirePermission("quiz.manage");
-  const { ref = "" } = await searchParams;
+  const { ref = "", turno } = await searchParams;
   const categoryId = ref.startsWith("c:") ? ref.slice(2) : null;
   const tournament = ref.startsWith("t:") ? await prisma.tournament.findUnique({ where: { id: ref.slice(2) } }) : null;
-  const d = await suggestQuizDefaults(categoryId);
+  const slotAt = categoryId && turno && !Number.isNaN(Date.parse(turno)) ? new Date(turno) : undefined;
+  const d = await suggestQuizDefaults(categoryId, new Date(), slotAt);
   const opensAt = tournament ? (tournament.startsAt > new Date() ? tournament.startsAt : d.opensAt) : d.opensAt;
   const tz = user.timezone;
   return (
     <>
       <PageHeader
         title="Nuevo cuestionario"
-        description="Se crea como borrador. Después agregás las preguntas y lo publicás."
+        description={
+          slotAt
+            ? `Para el turno del ${formatDateTime(slotAt, user.timezone)}: abre a esa hora y reemplaza al borrador automático del turno, si había. Después agregás las preguntas y lo publicás.`
+            : "Se crea como borrador. Después agregás las preguntas y lo publicás."
+        }
         back={{ href: "/admin/cuestionarios", label: "Cuestionarios" }}
       />
       <QuizForm
         id={null}
+        slotAt={slotAt?.toISOString()}
         mode="full"
         timezone={tz}
         refs={await quizRefOptions()}

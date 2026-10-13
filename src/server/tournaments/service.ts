@@ -117,7 +117,7 @@ export async function generateTournamentQuizzes(id: string, actor: { id: string 
   const s = await getSettings();
   const missing = t.quizCount - t._count.quizzes;
   if (missing <= 0) throw new UserError("El torneo ya tiene todos sus cuestionarios.");
-  const activeMs = Math.min(s["quiz.activeDays"], t.frequencyDays) * DAY;
+  const activeMs = Math.min(s["quiz.activeHours"] * 3_600_000, t.frequencyDays * DAY);
   const created = [];
   for (let i = t._count.quizzes; i < t.quizCount; i++) {
     const opensAt = new Date(t.startsAt.getTime() + i * t.frequencyDays * DAY);

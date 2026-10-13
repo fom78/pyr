@@ -17,7 +17,7 @@ type Def<T extends z.ZodType> = {
   unit?: string;
 };
 
-export type SettingGroup = "Liga" | "Cuestionarios" | "Automático" | "Puntaje" | "Juego" | "Créditos" | "Torneos" | "Moderación";
+export type SettingGroup = "Liga" | "Cuestionarios" | "Automático" | "Puntaje" | "Juego" | "Créditos" | "Torneos" | "Avisos" | "Moderación";
 
 const int = (min: number, max: number) => z.number().int().min(min).max(max);
 
@@ -69,23 +69,14 @@ export const settingsRegistry = {
   }),
 
   // ── Cuestionarios ──
-  "quiz.frequencyDays": def({
-    schema: int(1, 60),
-    default: 3,
-    label: "Frecuencia de publicación",
-    help: "Cada cuántos días se publica un cuestionario nuevo en una categoría (sugerencia al programar).",
+  "quiz.activeHours": def({
+    schema: int(1, 24 * 60),
+    default: 72,
+    label: "Validez de un cuestionario",
+    help: "Cuánto tiempo queda abierto para jugar desde que abre. Es independiente de la frecuencia del calendario: con frecuencia de 24 h y validez de 72 h hay unos 3 abiertos a la vez.",
     group: "Cuestionarios",
     categoryOverride: true,
-    unit: "días",
-  }),
-  "quiz.activeDays": def({
-    schema: int(1, 60),
-    default: 3,
-    label: "Días jugable",
-    help: "Duración por defecto del estado ACTIVO de un cuestionario.",
-    group: "Cuestionarios",
-    categoryOverride: true,
-    unit: "días",
+    unit: "horas",
   }),
   "quiz.computableDays": def({
     schema: int(1, 365),
@@ -197,6 +188,14 @@ export const settingsRegistry = {
     categoryOverride: true,
     unit: "días",
   }),
+  "autoquiz.rescueSlots": def({
+    schema: z.boolean(),
+    default: false,
+    label: "Rescatar turnos sin cuestionario",
+    help: "Si un turno ya está dentro del aviso de urgencia y no tiene cuestionario, el sistema arma uno con preguntas del banco y lo publica solo (si alcanzan para completarlo). Hasta que abra se puede despublicar.",
+    group: "Automático",
+    categoryOverride: true,
+  }),
 
   // ── Puntaje ──
   "scoring.base": def({
@@ -288,14 +287,14 @@ export const settingsRegistry = {
   }),
   "credits.streakLength": def({
     schema: int(2, 100),
-    default: 5,
+    default: 7,
     label: "Largo de racha",
-    help: "Cantidad de cuestionarios seguidos de una categoría (sin saltear ninguno) para cobrar el bonus.",
+    help: "Cantidad de cuestionarios seguidos de una categoría (sin dejar cerrar ninguno sin jugar) para cobrar el bonus.",
     group: "Créditos",
   }),
   "credits.streakBonus": def({
     schema: int(0, 10000),
-    default: 10,
+    default: 15,
     label: "Bonus por racha",
     group: "Créditos",
     unit: "créditos",
@@ -307,6 +306,31 @@ export const settingsRegistry = {
     default: 1,
     label: "Comodines por cuestionario (default)",
     group: "Torneos",
+  }),
+
+  // ── Avisos a jugadores (campanita) ──
+  "notify.newQuiz": def({
+    schema: z.boolean(),
+    default: true,
+    label: "Avisar cuando abre un cuestionario",
+    help: "Los participantes de la categoría reciben “nuevo cuestionario disponible” cuando abre uno de la liga.",
+    group: "Avisos",
+    categoryOverride: true,
+  }),
+  "notify.streakRiskHours": def({
+    schema: int(0, 72),
+    default: 6,
+    label: "Aviso de racha en riesgo",
+    help: "Horas antes del cierre en que se avisa a quien tiene una racha de 2 o más y todavía no jugó ese cuestionario (0 = no avisar).",
+    group: "Avisos",
+    unit: "horas",
+  }),
+  "notify.weeklySummary": def({
+    schema: z.boolean(),
+    default: true,
+    label: "Resumen semanal",
+    help: "Los lunes a la mañana cada jugador recibe su puesto, racha y mejor puntaje de la semana en cada categoría.",
+    group: "Avisos",
   }),
 
   // ── Moderación ──

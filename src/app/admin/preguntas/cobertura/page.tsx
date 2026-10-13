@@ -35,7 +35,15 @@ export default async function CoveragePage() {
                   </Link>
                   <CoverageBadge level={c.coverage.level} />
                   <span className="text-muted-foreground text-xs font-normal">
-                    {c.perQuiz} preguntas por cuestionario · {c.upcoming.length} turnos en los próximos días
+                    {c.perQuiz} preguntas por cuestionario ·{" "}
+                    {c.upcoming.filter((u) => u.status !== "excluded" && u.status !== "skipped").length} turnos en los próximos
+                    días
+                    {c.upcoming.some((u) => u.urgent) && (
+                      <span className="text-destructive">
+                        {" "}
+                        · {c.upcoming.filter((u) => u.urgent).length} sin cuestionario a punto de abrir
+                      </span>
+                    )}
                   </span>
                 </CardTitle>
               </CardHeader>

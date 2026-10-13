@@ -24,6 +24,14 @@ export function isPlayable(q: QuizTiming, now = new Date()) {
   return getQuizStatus(q, now) === "ACTIVE";
 }
 
+/**
+ * Hasta cuándo un cuestionario de liga cuenta para la tabla: la ventana se desliza por `closesAt`
+ * (`ranking.windowDays`) y además tiene que seguir computable (`expiresAt`).
+ */
+export function countsForTableUntil(q: { closesAt: Date; expiresAt: Date }, windowDays: number) {
+  return new Date(Math.min(q.closesAt.getTime() + windowDays * 86_400_000, q.expiresAt.getTime()));
+}
+
 /** Suma para la tabla de liga: vigente (se actualiza al terminar cada intento) o cerrado computable. */
 export function isComputable(q: QuizTiming, now = new Date()) {
   const st = getQuizStatus(q, now);

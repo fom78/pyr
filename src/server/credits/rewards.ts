@@ -1,6 +1,7 @@
 import { prisma, type Db } from "@/server/db";
 import { getSettings } from "@/server/config/service";
 import { postTransaction } from "./service";
+import { computeStreak } from "@/server/league/streak";
 
 export async function grantSignupBonus(userId: string, db: Db = prisma) {
   const s = await getSettings(db);
@@ -49,15 +50,37 @@ export function computeLeagueRewards(
   return out;
 }
 
-/** Actualiza la racha del usuario en la categoría y devuelve el valor nuevo. */
-export async function updateStreak(userId: string, quiz: { id: string; categoryId: string; opensAt: Date }, db: Db = prisma) {
-  const prev = await db.quiz.findFirst({
-    where: { categoryId: quiz.categoryId, tournamentId: null, publishedAt: { not: null }, opensAt: { lt: quiz.opensAt } },
-    orderBy: { opensAt: "desc" },
-    select: { id: true },
+/** Cuestionarios hacia atrás que se miran para la racha (de sobra para cualquier largo configurado). */
+const STREAK_LOOKBACK = 400;
+
+/**
+ * Recalcula la racha del usuario en la categoría (ver `computeStreak`) al terminar `quiz` y la guarda.
+ * Cuentan los cuestionarios que cierran después de su ingreso actual a la categoría.
+ */
+export async function updateStreak(userId: string, quiz: { id: string; categoryId: string }, now = new Date(), db: Db = prisma) {
+  const membership = await db.categoryMembership.findFirst({
+    where: { userId, categoryId: quiz.categoryId },
+    orderBy: { joinedAt: "desc" },
+    select: { joinedAt: true },
   });
+  const quizzes = await db.quiz.findMany({
+    where: {
+      categoryId: quiz.categoryId,
+      tournamentId: null,
+      publishedAt: { not: null },
+      ...(membership ? { closesAt: { gt: membership.joinedAt } } : {}),
+    },
+    orderBy: { closesAt: "desc" },
+    take: STREAK_LOOKBACK,
+    select: { id: true, closesAt: true },
+  });
+  const attempts = await db.attempt.findMany({
+    where: { userId, quizId: { in: quizzes.map((q) => q.id) }, status: { in: ["FINISHED", "TIMED_OUT"] } },
+    select: { quizId: true },
+  });
+  const played = new Set([quiz.id, ...attempts.map((a) => a.quizId)]);
+  const current = computeStreak(quizzes, played, now, membership?.joinedAt ?? null);
   const st = await db.streakState.findUnique({ where: { userId_categoryId: { userId, categoryId: quiz.categoryId } } });
-  const current = st && prev && st.lastQuizId === prev.id ? st.current + 1 : 1;
   await db.streakState.upsert({
     where: { userId_categoryId: { userId, categoryId: quiz.categoryId } },
     create: { userId, categoryId: quiz.categoryId, current, best: current, lastQuizId: quiz.id },
@@ -69,12 +92,12 @@ export async function updateStreak(userId: string, quiz: { id: string; categoryI
 /** Otorga los créditos de un intento de liga terminado. Idempotente (keys por intento). */
 export async function grantLeagueRewards(
   attempt: { id: string; userId: string; correctCount: number },
-  quiz: { id: string; title: string; categoryId: string; opensAt: Date },
+  quiz: { id: string; title: string; categoryId: string },
   total: number,
   db: Db = prisma,
 ) {
   const s = await getSettings(db);
-  const streak = await updateStreak(attempt.userId, quiz, db);
+  const streak = await updateStreak(attempt.userId, quiz, new Date(), db);
   const lines = computeLeagueRewards(
     { attemptId: attempt.id, quizTitle: quiz.title, correct: attempt.correctCount, total, streak },
     {

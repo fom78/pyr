@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { upcomingSlots } from "@/server/autoquiz/slots";
+import { describeCadence, gridSlots, upcomingSlots } from "@/server/autoquiz/slots";
 import { pickQuestions, remainingMix } from "@/server/autoquiz/pick";
 import { projectCoverage } from "@/server/autoquiz/coverage";
 import { renderTitle } from "@/server/autoquiz/title";
@@ -8,30 +8,79 @@ const DAY = 86_400_000;
 const TZ = "America/Argentina/Buenos_Aires"; // UTC-3 sin horario de verano
 const noRandom = () => 0.999; // con este rng el barajado deja el orden de prioridad
 
-describe("upcomingSlots", () => {
-  const schedule = { weekdays: [1, 3, 5], timeOfDay: "20:00", timezone: TZ };
+describe("upcomingSlots / gridSlots", () => {
+  const H = 3_600_000;
+  // Lunes 27/10/2025 20:00 en Buenos Aires
+  const anchorAt = new Date("2025-10-27T23:00:00Z");
+  const iso = (ds: Date[]) => ds.map((d) => d.toISOString());
 
-  it("genera lun/mié/vie a las 20 hora local (23 UTC) dentro del rango", () => {
-    // Martes 28/10/2025 10:00 UTC → hasta el martes siguiente
-    const from = new Date("2025-10-28T10:00:00Z");
-    const slots = upcomingSlots(schedule, from, new Date(from.getTime() + 7 * DAY));
-    expect(slots.map((d) => d.toISOString())).toEqual([
+  it("cada 24 h a la misma hora local, salteando los días excluidos sin correr la grilla", () => {
+    const schedule = { anchorAt, frequencyHours: 24, excludedWeekdays: [0, 2, 4, 6], timezone: TZ };
+    const from = new Date("2025-10-28T10:00:00Z"); // martes
+    expect(iso(upcomingSlots(schedule, from, new Date(from.getTime() + 7 * DAY)))).toEqual([
       "2025-10-29T23:00:00.000Z", // mié
       "2025-10-31T23:00:00.000Z", // vie (cruza fin de mes)
       "2025-11-03T23:00:00.000Z", // lun
     ]);
   });
 
-  it("el día local manda: a las 22 locales del lunes ya pasó el turno de ese lunes", () => {
-    const from = new Date("2025-11-04T01:00:00Z"); // lunes 3/11 22:00 en Buenos Aires
-    const [first] = upcomingSlots(schedule, from, new Date(from.getTime() + 3 * DAY));
-    expect(first.toISOString()).toBe("2025-11-05T23:00:00.000Z"); // miércoles
+  it("36 h (no divide 24): horas absolutas; el turno en día excluido se marca y el siguiente no se mueve", () => {
+    const schedule = { anchorAt, frequencyHours: 36, excludedWeekdays: [0], timezone: TZ };
+    const until = new Date("2025-11-04T12:00:00Z");
+    const grid = gridSlots(schedule, anchorAt, until);
+    expect(grid.map((g) => [g.at.toISOString(), g.excluded])).toEqual([
+      ["2025-10-29T11:00:00.000Z", false], // mié 08:00
+      ["2025-10-30T23:00:00.000Z", false], // jue 20:00
+      ["2025-11-01T11:00:00.000Z", false], // sáb 08:00
+      ["2025-11-02T23:00:00.000Z", true], // dom 20:00 → excluido
+      ["2025-11-04T11:00:00.000Z", false], // mar 08:00 (36 h después del domingo, no del sábado)
+    ]);
+    expect(upcomingSlots(schedule, anchorAt, until)).toHaveLength(4);
   });
 
-  it("sin días o con hora inválida no genera nada", () => {
+  it("el día excluido se evalúa en hora local: 22:00 del sábado en Buenos Aires es domingo en UTC", () => {
+    const sat22 = new Date("2025-11-02T01:00:00Z"); // sáb 1/11 22:00 local
+    const schedule = { anchorAt: sat22, frequencyHours: 24, excludedWeekdays: [0], timezone: TZ };
+    expect(gridSlots(schedule, new Date(sat22.getTime() - 1), sat22)).toEqual([{ at: sat22, excluded: false }]);
+  });
+
+  it("con el ancla en el futuro arranca en el ancla; 12 h da dos turnos por día", () => {
+    const schedule = { anchorAt, frequencyHours: 12, excludedWeekdays: [], timezone: TZ };
+    const from = new Date(anchorAt.getTime() - 10 * DAY);
+    expect(iso(upcomingSlots(schedule, from, new Date(anchorAt.getTime() + 24 * H)))).toEqual([
+      "2025-10-27T23:00:00.000Z",
+      "2025-10-28T11:00:00.000Z",
+      "2025-10-28T23:00:00.000Z",
+    ]);
+  });
+
+  it("cambio de horario: con 24 h mantiene la hora de pared; con 36 h, horas absolutas", () => {
+    const ny = "America/New_York"; // el 2/11/2025 pasa de UTC-4 a UTC-5
+    const a = new Date("2025-11-01T00:00:00Z"); // vie 31/10 20:00 EDT
+    const daily = { anchorAt: a, frequencyHours: 24, excludedWeekdays: [], timezone: ny };
+    expect(iso(upcomingSlots(daily, a, new Date("2025-11-04T00:00:00Z")))).toEqual([
+      "2025-11-02T00:00:00.000Z", // sáb 20:00 EDT
+      "2025-11-03T01:00:00.000Z", // dom 20:00 EST
+    ]);
+    const every36 = { ...daily, frequencyHours: 36 };
+    expect(iso(upcomingSlots(every36, a, new Date("2025-11-04T00:00:00Z")))).toEqual([
+      "2025-11-02T12:00:00.000Z",
+      "2025-11-04T00:00:00.000Z",
+    ]);
+  });
+
+  it("frecuencia inválida no genera nada", () => {
     const from = new Date();
-    expect(upcomingSlots({ ...schedule, weekdays: [] }, from, new Date(from.getTime() + 30 * DAY))).toEqual([]);
-    expect(upcomingSlots({ ...schedule, timeOfDay: "25:00" }, from, new Date(from.getTime() + 30 * DAY))).toEqual([]);
+    expect(upcomingSlots({ anchorAt, frequencyHours: 0, excludedWeekdays: [], timezone: TZ }, from, new Date(from.getTime() + DAY))).toEqual([]);
+  });
+});
+
+describe("describeCadence", () => {
+  it("arma el texto para jugadores", () => {
+    expect(describeCadence({ frequencyHours: 24, excludedWeekdays: [] })).toBe("todos los días");
+    expect(describeCadence({ frequencyHours: 24, excludedWeekdays: [0] })).toBe("todos los días salvo dom");
+    expect(describeCadence({ frequencyHours: 12, excludedWeekdays: [2, 4] })).toBe("cada 12 h salvo mar y jue");
+    expect(describeCadence({ frequencyHours: 48, excludedWeekdays: [] })).toBe("cada 2 días");
   });
 });
 

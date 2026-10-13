@@ -367,7 +367,7 @@ export async function finalizeAttempt(attemptId: string, now = new Date()) {
     if (attempt.quiz.categoryId && !attempt.quiz.tournamentId) {
       await grantLeagueRewards(
         { id: attemptId, userId: attempt.userId, correctCount: result.correctCount },
-        { id: attempt.quiz.id, title: attempt.quiz.title, categoryId: attempt.quiz.categoryId, opensAt: attempt.quiz.opensAt },
+        { id: attempt.quiz.id, title: attempt.quiz.title, categoryId: attempt.quiz.categoryId },
         total,
       );
       await prisma.attempt.update({ where: { id: attemptId }, data: { rewardsGiven: true } });

@@ -1,5 +1,5 @@
 import { prisma, type Db } from "@/server/db";
-import type { NotificationLevel } from "@/generated/prisma/client";
+import type { NotificationAudience, NotificationLevel } from "@/generated/prisma/client";
 import { activeBanWhere } from "@/server/users/bans";
 
 export type NotificationInput = {
@@ -18,10 +18,25 @@ export async function notifyStaff(input: NotificationInput, now = new Date(), db
     where: { role: { in: ["ADMIN", "MOD"] }, bans: { none: activeBanWhere(now) } },
     select: { id: true },
   });
-  if (!staff.length) return 0;
+  return createFor(
+    staff.map((u) => u.id),
+    "STAFF",
+    input,
+    db,
+  );
+}
+
+/** Avisos del juego para jugadores puntuales (campanita del jugador). */
+export async function notifyUsers(userIds: string[], input: NotificationInput, db: Db = prisma) {
+  return createFor(userIds, "PLAYER", input, db);
+}
+
+async function createFor(userIds: string[], audience: NotificationAudience, input: NotificationInput, db: Db) {
+  if (!userIds.length) return 0;
   const res = await db.notification.createMany({
-    data: staff.map((u) => ({
-      userId: u.id,
+    data: userIds.map((userId) => ({
+      userId,
+      audience,
       level: input.level,
       kind: input.kind,
       title: input.title,
@@ -34,22 +49,44 @@ export async function notifyStaff(input: NotificationInput, now = new Date(), db
   return res.count;
 }
 
-export async function listNotifications(userId: string, opts: { take?: number; unreadOnly?: boolean } = {}, db: Db = prisma) {
+export async function listNotifications(
+  userId: string,
+  audience: NotificationAudience,
+  opts: { take?: number; unreadOnly?: boolean } = {},
+  db: Db = prisma,
+) {
   return db.notification.findMany({
-    where: { userId, ...(opts.unreadOnly ? { readAt: null } : {}) },
+    where: { userId, audience, ...(opts.unreadOnly ? { readAt: null } : {}) },
     orderBy: { createdAt: "desc" },
     take: opts.take ?? 50,
   });
 }
 
-export async function unreadCount(userId: string, db: Db = prisma) {
-  return db.notification.count({ where: { userId, readAt: null } });
+export async function unreadCount(userId: string, audience: NotificationAudience, db: Db = prisma) {
+  return db.notification.count({ where: { userId, audience, readAt: null } });
 }
 
-/** Marca como leídas las indicadas (o todas si `ids` no viene). Solo las del propio usuario. */
-export async function markRead(userId: string, ids?: string[], now = new Date(), db: Db = prisma) {
-  await db.notification.updateMany({
-    where: { userId, readAt: null, ...(ids ? { id: { in: ids } } : {}) },
+/**
+ * Marca como leídas las indicadas, o todas las de la audiencia si `ids` no viene.
+ * Solo toca las del propio usuario. Devuelve cuántas cambió.
+ */
+export async function markRead(
+  userId: string,
+  target: { ids: string[] } | { audience: NotificationAudience },
+  now = new Date(),
+  db: Db = prisma,
+) {
+  const res = await db.notification.updateMany({
+    where: { userId, readAt: null, ...("ids" in target ? { id: { in: target.ids } } : { audience: target.audience }) },
     data: { readAt: now },
   });
+  return res.count;
+}
+
+/** Abre una notificación propia: la marca como leída y devuelve a dónde lleva (null si no es del usuario). */
+export async function openNotification(userId: string, id: string, now = new Date(), db: Db = prisma) {
+  const n = await db.notification.findFirst({ where: { id, userId } });
+  if (!n) return null;
+  if (!n.readAt) await db.notification.update({ where: { id }, data: { readAt: now } });
+  return n;
 }

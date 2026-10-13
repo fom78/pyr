@@ -16,7 +16,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     userCan(user, "user.list"),
     userCan(user, "audit.view"),
     userCan(user, "rules.edit"),
-    unreadCount(user.id),
+    unreadCount(user.id, "STAFF"),
   ]);
   const items: AdminNavItem[] = [
     { href: "/admin", label: "Dashboard", icon: "gauge", exact: true },

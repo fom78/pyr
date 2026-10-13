@@ -5,6 +5,7 @@ import { CalendarClock, CheckCircle2, ListOrdered } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
 import { getCategoryPageData } from "@/server/player/queries";
 import { getLivesSummary } from "@/server/league/service";
+import { countsForTableUntil } from "@/server/quiz/status";
 import { EmptyState, HelpTip, PageHeader } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { QuizCard } from "@/components/game/quiz-card";
 import { StandingsTable } from "@/components/game/standings-table";
 import { MemberStats } from "@/components/game/category-card";
 import { JoinButton, LeaveButton } from "@/components/game/membership-buttons";
-import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
+import { formatDate, formatDateTime, formatHours, formatNumber } from "@/lib/format";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
@@ -49,6 +50,16 @@ export default async function CategoryPage({
 
   return (
     <>
+      {data.cover && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={data.cover.src}
+          srcSet={data.cover.srcSet}
+          sizes="(min-width: 1024px) 1024px, 100vw"
+          alt=""
+          className="mb-4 aspect-[2/1] w-full rounded-lg border object-cover sm:aspect-[3/1]"
+        />
+      )}
       <PageHeader
         back={{ href: "/categorias", label: "Liga" }}
         title={
@@ -111,7 +122,15 @@ export default async function CategoryPage({
             active.map((q) => (
               <QuizCard
                 key={q.id}
-                q={{ ...toCard(q), subtitle: q.participants > 0 && <p className="text-xs text-muted-foreground">{q.participants} ya lo jugaron</p> }}
+                q={{
+                  ...toCard(q),
+                  subtitle: (
+                    <p className="text-xs text-muted-foreground">
+                      {q.participants > 0 && <>{q.participants} ya lo jugaron · </>}
+                      cuenta para la tabla hasta el {formatDate(countsForTableUntil(q, s["ranking.windowDays"]), tz, "d/M")}
+                    </p>
+                  ),
+                }}
                 canPlay={canPlay}
                 tz={tz}
               />
@@ -157,7 +176,8 @@ export default async function CategoryPage({
           <h2 className="font-semibold">
             Historial{" "}
             <HelpTip>
-              “Suma”: todavía cuenta para la tabla (hasta {s["quiz.computableDays"]} días después de cerrar). “Ya no suma”: quedó como historial.
+              “Suma”: todavía cuenta para la tabla (la tabla mira los cuestionarios que cerraron en los últimos {s["ranking.windowDays"]}{" "}
+              días). “Ya no suma”: quedó como historial.
             </HelpTip>
           </h2>
           {history.length === 0 ? (
@@ -166,13 +186,15 @@ export default async function CategoryPage({
             <ul className="grid gap-2">
               {history.map((q) => {
                 const played = q.attempt && q.attempt.status !== "IN_PROGRESS";
+                const until = countsForTableUntil(q, s["ranking.windowDays"]);
+                const counts = q.derived === "CLOSED" && until > data.now;
                 const row = (
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border p-3 text-sm transition-colors hover:bg-accent/40">
                     <div className="grid min-w-0 flex-1 gap-0.5">
                       <span className="flex flex-wrap items-center gap-2 font-medium">
                         {q.title}
-                        <Badge variant={q.derived === "CLOSED" ? "default" : "outline"} className="text-[10px]">
-                          {q.derived === "CLOSED" ? "suma" : "ya no suma"}
+                        <Badge variant={counts ? "default" : "outline"} className="text-[10px]">
+                          {counts ? `suma hasta el ${formatDate(until, tz, "d/M")}` : "ya no suma"}
                         </Badge>
                       </span>
                       <span className="text-xs text-muted-foreground">
@@ -219,8 +241,9 @@ export default async function CategoryPage({
         <section className="grid gap-1 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
           <h2 className="font-semibold text-foreground">Sobre esta categoría</h2>
           <p>
-            {data.participants} {data.participants === 1 ? "participante" : "participantes"} · un cuestionario cada {s["quiz.frequencyDays"]}{" "}
-            {s["quiz.frequencyDays"] === 1 ? "día" : "días"} · en la tabla suman tus {bestK} mejores de los últimos {s["ranking.windowDays"]} días.
+            {data.participants} {data.participants === 1 ? "participante" : "participantes"}
+            {data.cadence && ` · un cuestionario nuevo ${data.cadence}`} · cada uno queda abierto{" "}
+            {formatHours(s["quiz.activeHours"])} · en la tabla suman tus {bestK} mejores de los últimos {s["ranking.windowDays"]} días.
           </p>
         </section>
       </div>

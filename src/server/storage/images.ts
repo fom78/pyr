@@ -1,6 +1,6 @@
 import sharp, { type Metadata as SharpMetadata } from "sharp";
 import { UserError } from "@/server/errors";
-import { newKey, storage } from "./index";
+import { newKey, smallVariantKey, storage } from "./index";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const ACCEPTED = new Set(["jpeg", "png", "webp", "gif", "avif", "heif", "tiff"]);
@@ -32,5 +32,34 @@ export async function processAndStoreImage(input: Buffer, preset: ImagePreset, f
     .toBuffer();
   const key = newKey(folder, "webp");
   await storage().put(key, out, "image/webp");
+  if (preset === "cover") await storeCoverSmall(key, out);
   return key;
+}
+
+/** Variante chica de una portada (600×315), para tarjetas y celulares. */
+const COVER_SMALL = { width: 600, height: 315, quality: 78 };
+
+async function storeCoverSmall(key: string, cover: Buffer) {
+  const small = await sharp(cover)
+    .resize({ width: COVER_SMALL.width, height: COVER_SMALL.height, fit: "cover", withoutEnlargement: true })
+    .webp({ quality: COVER_SMALL.quality })
+    .toBuffer();
+  await storage().put(smallVariantKey(key), small, "image/webp");
+}
+
+/**
+ * Genera la variante chica de las portadas que no la tienen (subidas antes de que existiera).
+ * Idempotente; la corre el worker.
+ */
+export async function ensureCoverVariants(keys: string[]) {
+  let created = 0;
+  for (const key of keys) {
+    if (/^https?:\/\//.test(key) || !key.endsWith(".webp")) continue;
+    if (await storage().get(smallVariantKey(key))) continue;
+    const file = await storage().get(key);
+    if (!file) continue;
+    await storeCoverSmall(key, file.body);
+    created++;
+  }
+  return created;
 }

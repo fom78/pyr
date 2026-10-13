@@ -4,7 +4,7 @@ import { prisma } from "@/server/db";
 import { PageHeader } from "@/components/common";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
-import { coverageMessage, listBankCoverage, listPendingDrafts } from "@/server/autoquiz/service";
+import { coverageMessage, listBankCoverage, listPendingDrafts, unreadySlots } from "@/server/autoquiz/service";
 
 export const metadata = { title: "Dashboard" };
 
@@ -48,9 +48,10 @@ export default async function DashboardPage() {
     }),
   ]);
   const maxAttempts = Math.max(1, ...recentQuizzes.map((q) => q._count.attempts));
-  const [coverage, drafts, skipped] = await Promise.all([
+  const [coverage, drafts, unready, skipped] = await Promise.all([
     listBankCoverage(now),
     listPendingDrafts(now),
+    unreadySlots(now, 72),
     prisma.auditLog.findMany({ where: { action: "quiz.autoSkipped", createdAt: { gte: weekAgo } }, orderBy: { createdAt: "desc" }, take: 5 }),
   ]);
   const critical = coverage.filter((c) => c.coverage.level === "CRITICAL");
@@ -83,6 +84,12 @@ export default async function DashboardPage() {
           href="/admin/cuestionarios/por-aprobar"
         />
         <Stat label="Categorías con banco bajo" value={lowCoverage} href="/admin/preguntas/cobertura" />
+        <Stat
+          label="Turnos de las próximas 72 h sin cuestionario listo"
+          value={unready.length}
+          hint={unready.some((u) => !u.quiz) ? `${unready.filter((u) => !u.quiz).length} sin asignar` : undefined}
+          href="/admin/preguntas/cobertura"
+        />
       </div>
       <Card>
         <CardHeader>

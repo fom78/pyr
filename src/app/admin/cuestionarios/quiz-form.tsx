@@ -28,6 +28,8 @@ export type QuizFormValues = {
 
 type Props = {
   id: string | null;
+  /** Turno del calendario automático al que se asigna el cuestionario nuevo (ISO). */
+  slotAt?: string;
   initial: QuizFormValues;
   refs: { value: string; label: string }[];
   /** DRAFT/SCHEDULED: todo editable. Abierto: solo título, cierre y vencimiento. */
@@ -35,13 +37,14 @@ type Props = {
   timezone: string;
 };
 
-export function QuizForm({ id, initial, refs, mode, timezone }: Props) {
+export function QuizForm({ id, slotAt, initial, refs, mode, timezone }: Props) {
   const [state, action] = useActionState(saveQuizAction.bind(null, id), null);
   const fe = state?.fieldErrors;
   const lockedAll = mode === "opened";
   const lockedScoring = mode !== "full";
   return (
     <form action={action} className="grid gap-6">
+      {slotAt && <input type="hidden" name="slotAt" value={slotAt} />}
       <FormError message={state?.error} />
       {state?.message && <p className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">{state.message}</p>}
       <Card>
@@ -108,6 +111,10 @@ export function QuizForm({ id, initial, refs, mode, timezone }: Props) {
               <Switch id="shuffleOptions" name="shuffleOptions" defaultChecked={initial.shuffleOptions} />
               <Label htmlFor="shuffleOptions">Orden aleatorio de opciones</Label>
             </div>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              En los cuestionarios de liga los dos quedan siempre activados (se mezclan en cada intento para que cueste pasarse las
+              respuestas); estos switches aplican a los de torneo.
+            </p>
           </CardContent>
         </Card>
         <Card>

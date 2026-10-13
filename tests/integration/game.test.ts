@@ -141,7 +141,7 @@ describe.skipIf(!hasDb)("motor de juego", () => {
     expect(rows.map((r) => r.userId)).toEqual([other.id, user.id]);
     expect(rows[1].previousRank).toBe(1);
 
-    const impact = await leagueImpact({ id: first.id, userId: user.id }, cat.id, T0);
+    const impact = await leagueImpact({ id: first.id, userId: user.id, quiz }, cat.id, T0);
     expect(impact).toMatchObject({ counts: true, participants: 2 });
     expect(impact?.standing?.rank).toBe(2);
   });

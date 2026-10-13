@@ -26,16 +26,28 @@ function Num({ label, value, hint }: { label: string; value: React.ReactNode; hi
   );
 }
 
+/** "N días de banco" desde ahora hasta el último turno cubierto. */
+export function bankDays(until: Date | null, now: Date) {
+  if (!until) return null;
+  const days = Math.max(0, Math.floor((until.getTime() - now.getTime()) / 86_400_000));
+  return `${days} ${days === 1 ? "día" : "días"} de banco`;
+}
+
 /** Resumen de cobertura del banco de una categoría (se usa en la página de cobertura y en la categoría). */
 export function CoverageView({ c, tz, showSlots = true }: { c: BankCoverage; tz: string; showSlots?: boolean }) {
   const cov = c.coverage;
+  const now = c.computedAt;
   const day = (d: Date | null) => (d ? formatDate(d, tz, "EEE d/M") : "—");
   return (
     <div className="grid gap-4">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Num label="Nunca usadas" value={c.fresh} hint={`+${c.reservedInDrafts} en borradores`} />
         <Num label="Reutilizables" value={c.reusable} />
-        <Num label="Nuevas alcanzan hasta" value={day(cov.freshCoveredUntil)} />
+        <Num
+          label="Nuevas alcanzan hasta"
+          value={day(cov.freshCoveredUntil)}
+          hint={bankDays(cov.freshCoveredUntil, now) ?? undefined}
+        />
         <Num label="Con reutilizadas, hasta" value={day(cov.totalCoveredUntil)} />
       </div>
       {cov.freshShortfall > 0 ? (
@@ -60,14 +72,47 @@ export function CoverageView({ c, tz, showSlots = true }: { c: BankCoverage; tz:
       {showSlots && c.upcoming.length > 0 && (
         <ul className="grid gap-1 text-sm">
           {c.upcoming.map((u) => (
-            <li key={u.at.toISOString()} className="flex items-center justify-between gap-2 border-b py-1 last:border-0">
-              <span className="tabular-nums">{formatDateTime(u.at, tz)}</span>
-              <span className="text-muted-foreground text-xs">
+            <li
+              key={u.at.toISOString()}
+              className={cn(
+                "flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b py-1.5 last:border-0",
+                (u.status === "excluded" || u.status === "skipped") && "text-muted-foreground opacity-60",
+              )}
+            >
+              <span className="w-36 shrink-0 tabular-nums">{formatDateTime(u.at, tz)}</span>
+              <span className="min-w-0 flex-1">
+                {u.quiz ? (
+                  <Link href={`/admin/cuestionarios/${u.quiz.id}`} className="font-medium hover:underline">
+                    {u.quiz.title}
+                  </Link>
+                ) : u.status === "excluded" ? (
+                  "Día excluido"
+                ) : u.status === "skipped" ? (
+                  "Salteado"
+                ) : (
+                  <span className={cn(u.urgent ? "text-destructive font-medium" : "text-muted-foreground")}>Sin asignar</span>
+                )}
+              </span>
+              <span className="text-muted-foreground flex items-center gap-2 text-xs">
                 {u.status === "published"
                   ? "publicado"
                   : u.status === "draft"
                     ? `borrador (${u.questions}/${c.perQuiz})`
-                    : "se genera más adelante"}
+                    : u.status === "pending"
+                      ? u.urgent
+                        ? c.rescue
+                          ? "se arma solo si alcanzan las preguntas"
+                          : "no se va a generar solo"
+                        : "se genera más adelante"
+                      : null}
+                {u.status === "pending" && (
+                  <Link
+                    href={`/admin/cuestionarios/nuevo?ref=c:${c.categoryId}&turno=${u.at.toISOString()}`}
+                    className="text-primary font-medium hover:underline"
+                  >
+                    Asignar
+                  </Link>
+                )}
               </span>
             </li>
           ))}

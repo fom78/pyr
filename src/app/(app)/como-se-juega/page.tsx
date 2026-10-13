@@ -5,6 +5,7 @@ import { rulesFromSettings } from "@/server/rules/view";
 import { defaultRulesTexts, type RulesSection } from "@/server/rules/defaults";
 import { wildcardStrategies } from "@/server/wildcards/strategies";
 import { PageHeader } from "@/components/common";
+import { formatHours } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -76,7 +77,8 @@ export default async function HowToPlayPage() {
           </Section>
           <Section title="🗓️ Los cuestionarios">
             <p>
-              Cada categoría publica un cuestionario nuevo aproximadamente cada {r.frequencyDays} días. Todos los cuestionarios de la liga
+              Cada categoría publica cuestionarios con un calendario fijo (por ejemplo, todos los días a la misma hora) y cada uno queda
+              abierto {formatHours(r.activeHours)}, así siempre hay varios para jugar. Todos los cuestionarios de la liga
               tienen <strong>la misma cantidad de preguntas</strong> (habitualmente {r.questionCount}), así cada uno vale lo mismo en la tabla.
               Pasan por estas etapas:
             </p>
@@ -85,7 +87,7 @@ export default async function HowToPlayPage() {
                 <strong>Próximamente</strong>: ya está anunciado, todavía no se puede jugar.
               </li>
               <li>
-                <strong>Vigente</strong>: se puede jugar (habitualmente {r.activeDays} días). <strong>Tenés un solo intento.</strong> Apenas lo
+                <strong>Vigente</strong>: se puede jugar (habitualmente {formatHours(r.activeHours)}). <strong>Tenés un solo intento.</strong> Apenas lo
                 terminás, tu puntaje <strong>ya suma para la tabla</strong>.
               </li>
               <li>
@@ -188,7 +190,7 @@ export default async function HowToPlayPage() {
                 anterior.
               </li>
               <li>
-                Racha: si completás {r.credits.streakLength} cuestionarios seguidos de una categoría sin saltear ninguno, ganás {r.credits.streakBonus}.
+                Racha: si completás {r.credits.streakLength} cuestionarios seguidos de una categoría sin dejar que ninguno cierre sin jugarlo, ganás {r.credits.streakBonus}. Podés jugar los abiertos en cualquier orden; los que cerraron antes de que entraras a la categoría no cuentan.
               </li>
               <li>Premios por puesto en torneos.</li>
             </ul>

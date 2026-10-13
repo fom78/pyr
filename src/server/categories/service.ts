@@ -17,7 +17,6 @@ export const categoryInput = z.object({
   icon: z.string().trim().max(16).optional(),
   imageKey: z.string().trim().max(300).optional(),
   active: z.boolean().default(true),
-  frequencyDays: z.coerce.number().int().min(1).max(60).nullable().optional(),
   /** Overrides de configuración (solo keys marcadas como categoryOverride). Vacío = hereda global. */
   settings: z.record(z.string(), z.unknown()).default({}),
 });
@@ -50,7 +49,6 @@ export async function saveCategory(id: string | null, raw: unknown, actor: { id:
     icon: input.icon || null,
     imageKey: input.imageKey || null,
     active: input.active,
-    frequencyDays: input.frequencyDays ?? null,
     settings: cleanOverrides(input.settings) as object,
   };
   const before = id ? await db.category.findUnique({ where: { id } }) : null;

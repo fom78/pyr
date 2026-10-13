@@ -7,7 +7,7 @@ import { getAttemptResult } from "@/server/game/results";
 import { PageHeader } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatDateTime, formatMs, formatNumber } from "@/lib/format";
+import { formatDate, formatDateTime, formatMs, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Resultado" };
@@ -65,7 +65,7 @@ export default async function ResultPage({ params }: { params: Promise<{ attempt
           </span>
         </p>
       ) : (
-        <LeagueImpact r={r} slug={quiz.category!.slug} categoryName={quiz.category!.name} />
+        <LeagueImpact r={r} slug={quiz.category!.slug} categoryName={quiz.category!.name} tz={user.timezone} />
       )}
       {r.wildcard && (
         <p className="mb-4 rounded-md bg-warning/15 p-3 text-sm">
@@ -131,10 +131,12 @@ function LeagueImpact({
   r,
   slug,
   categoryName,
+  tz,
 }: {
   r: NonNullable<Awaited<ReturnType<typeof getAttemptResult>>>;
   slug: string;
   categoryName: string;
+  tz: string;
 }) {
   const st = r.league?.standing;
   const moved = st?.previousRank ? st.previousRank - st.rank : 0;
@@ -163,7 +165,8 @@ function LeagueImpact({
             <p className="text-xs text-muted-foreground">
               {r.league!.counts
                 ? `Este puntaje ya suma: está entre tus ${r.league!.bestK} mejores (${formatNumber(st.points)} pts en total).`
-                : `Este puntaje no mejoró tus ${r.league!.bestK} mejores, así que tu total sigue en ${formatNumber(st.points)} pts.`}
+                : `Este puntaje no mejoró tus ${r.league!.bestK} mejores, así que tu total sigue en ${formatNumber(st.points)} pts.`}{" "}
+              Este cuestionario cuenta para la tabla hasta el {formatDate(r.league!.countsUntil, tz, "d/M")}.
             </p>
           </>
         ) : r.status === "EXPIRED" ? (

@@ -7,8 +7,10 @@ import { logAudit } from "@/server/audit";
 import { recalculateQuizAttempts } from "@/server/game/engine";
 import { recomputeForQuiz } from "@/server/ranking/service";
 import { getQuizStatus, validateQuizTiming } from "./status";
+import { upcomingSlots } from "@/server/autoquiz/slots";
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 
 export const quizInput = z
   .object({
@@ -36,20 +38,38 @@ export const quizInput = z
 
 export type QuizInput = z.infer<typeof quizInput>;
 
-/** Valores sugeridos para un cuestionario nuevo de una categoría: próximo hueco según la frecuencia. */
-export async function suggestQuizDefaults(categoryId: string | null, now = new Date()) {
+/**
+ * En la liga el orden de preguntas y opciones siempre se mezcla por intento: los cuestionarios quedan
+ * abiertos varios días y así cuesta más pasarse las respuestas.
+ */
+function withLeagueShuffle<T extends { categoryId?: string | null; tournamentId?: string | null; shuffleQuestions: boolean; shuffleOptions: boolean }>(
+  q: T,
+): T {
+  return q.categoryId && !q.tournamentId ? { ...q, shuffleQuestions: true, shuffleOptions: true } : q;
+}
+
+/**
+ * Valores sugeridos para un cuestionario nuevo de una categoría: el turno indicado, o el próximo turno
+ * libre del calendario automático, o la próxima hora en punto.
+ */
+export async function suggestQuizDefaults(categoryId: string | null, now = new Date(), slotAt?: Date) {
   const s = categoryId
     ? await getCategorySettings(await prisma.category.findUniqueOrThrow({ where: { id: categoryId } }))
     : await getSettings();
-  const last = categoryId
-    ? await prisma.quiz.findFirst({ where: { categoryId, tournamentId: null }, orderBy: { opensAt: "desc" } })
-    : null;
-  let opensAt = new Date(Math.ceil(now.getTime() / 3_600_000) * 3_600_000); // próxima hora en punto
-  if (last) {
-    const next = new Date(last.opensAt.getTime() + s["quiz.frequencyDays"] * DAY);
-    if (next > opensAt) opensAt = next;
+  let opensAt = slotAt ?? new Date(Math.ceil(now.getTime() / HOUR) * HOUR); // próxima hora en punto
+  if (!slotAt && categoryId) {
+    const schedule = await prisma.quizSchedule.findUnique({ where: { categoryId } });
+    if (schedule?.enabled) {
+      const slots = upcomingSlots(schedule, now, new Date(now.getTime() + 60 * DAY));
+      const taken = await prisma.quiz.findMany({
+        where: { scheduleId: schedule.id, slotAt: { in: slots } },
+        select: { slotAt: true },
+      });
+      const busy = new Set([...taken.map((q) => q.slotAt!.getTime()), ...schedule.skippedSlots.map((d) => d.getTime())]);
+      opensAt = slots.find((d) => !busy.has(d.getTime())) ?? opensAt;
+    }
   }
-  const closesAt = new Date(opensAt.getTime() + s["quiz.activeDays"] * DAY);
+  const closesAt = new Date(opensAt.getTime() + s["quiz.activeHours"] * HOUR);
   return {
     opensAt,
     closesAt,
@@ -67,18 +87,55 @@ async function assertTiming(input: Pick<QuizInput, "opensAt" | "closesAt" | "exp
   if (errors.length) throw new UserError(errors.join(" "));
 }
 
-export async function createQuiz(raw: unknown, actor: { id: string }) {
-  const input = quizInput.parse(raw);
+/**
+ * Crea un cuestionario. Con `slotAt` se asigna a ese turno del calendario automático de la categoría:
+ * abre en el turno y reemplaza al borrador automático que hubiera (sus preguntas vuelven al banco).
+ */
+export async function createQuiz(raw: unknown, actor: { id: string }, opts: { slotAt?: Date } = {}) {
+  const input = withLeagueShuffle(quizInput.parse(raw));
   await assertTiming(input);
+  const slot = opts.slotAt && input.categoryId ? await claimSlot(input.categoryId, opts.slotAt, input.opensAt) : null;
   const quiz = await prisma.quiz.create({
-    data: { ...input, description: input.description || null, scoring: input.scoring, createdById: actor.id },
+    data: {
+      ...input,
+      description: input.description || null,
+      scoring: input.scoring,
+      createdById: actor.id,
+      ...(slot ? { scheduleId: slot.scheduleId, slotAt: slot.slotAt } : {}),
+    },
   });
-  await logAudit({ actorId: actor.id, action: "quiz.create", entityType: "Quiz", entityId: quiz.id });
+  await logAudit({
+    actorId: actor.id,
+    action: "quiz.create",
+    entityType: "Quiz",
+    entityId: quiz.id,
+    meta: slot ? { slotAt: slot.slotAt, replacedDraft: slot.replacedDraft } : undefined,
+  });
   return quiz;
 }
 
+/** Libera un turno para un cuestionario manual: valida que exista y borra el borrador automático que lo ocupaba. */
+async function claimSlot(categoryId: string, slotAt: Date, opensAt: Date) {
+  const schedule = await prisma.quizSchedule.findUnique({ where: { categoryId } });
+  if (!schedule) throw new UserError("La categoría no tiene calendario automático.");
+  if (opensAt.getTime() !== slotAt.getTime())
+    throw new UserError("Para asignarlo al turno, la apertura tiene que coincidir con la hora del turno.");
+  const inGrid = upcomingSlots(schedule, new Date(slotAt.getTime() - 1), slotAt).some((d) => d.getTime() === slotAt.getTime());
+  if (!inGrid) throw new UserError("Esa fecha no es un turno del calendario de la categoría.");
+  const current = await prisma.quiz.findUnique({ where: { scheduleId_slotAt: { scheduleId: schedule.id, slotAt } } });
+  if (current && (current.publishedAt || current.createdById))
+    throw new UserError(`El turno ya tiene un cuestionario: “${current.title}”.`);
+  if (current) await prisma.quiz.delete({ where: { id: current.id } });
+  if (schedule.skippedSlots.some((d) => d.getTime() === slotAt.getTime()))
+    await prisma.quizSchedule.update({
+      where: { id: schedule.id },
+      data: { skippedSlots: schedule.skippedSlots.filter((d) => d.getTime() !== slotAt.getTime()) },
+    });
+  return { scheduleId: schedule.id, slotAt, replacedDraft: current?.id ?? null };
+}
+
 export async function updateQuiz(id: string, raw: unknown, actor: { id: string }, now = new Date()) {
-  const input = quizInput.parse(raw);
+  const input = withLeagueShuffle(quizInput.parse(raw));
   const quiz = await prisma.quiz.findUnique({ where: { id } });
   if (!quiz) throw new NotFoundError("Cuestionario");
   const status = getQuizStatus(quiz, now);
@@ -93,6 +150,11 @@ export async function updateQuiz(id: string, raw: unknown, actor: { id: string }
     };
     delete (data as Record<string, unknown>).categoryId;
     delete (data as Record<string, unknown>).tournamentId;
+    // Si se mueve la apertura o cambia de categoría, deja de ocupar el turno del calendario.
+    if (quiz.slotAt && (input.opensAt.getTime() !== quiz.slotAt.getTime() || input.categoryId !== quiz.categoryId)) {
+      data.schedule = { disconnect: true };
+      data.slotAt = null;
+    }
     // Un programado no puede adelantarse a "ya abierto" ni cambiar el puntaje congelado sin despublicar
     if (status === "SCHEDULED") {
       if (input.opensAt <= now) throw new UserError("Un cuestionario programado no puede abrir en el pasado.");
@@ -144,7 +206,14 @@ export async function publishQuiz(id: string, actor: { id: string | null }, now 
   if (quiz.closesAt <= now) throw new UserError("La fecha de cierre ya pasó.");
   const errors = validateQuizTiming(quiz, quiz.tournament ?? undefined);
   if (errors.length) throw new UserError(errors.join(" "));
-  await prisma.quiz.update({ where: { id }, data: { publishedAt: now, status: getQuizStatus({ ...quiz, publishedAt: now }, now) } });
+  await prisma.quiz.update({
+    where: { id },
+    data: {
+      publishedAt: now,
+      status: getQuizStatus({ ...quiz, publishedAt: now }, now),
+      ...(quiz.categoryId && !quiz.tournamentId ? { shuffleQuestions: true, shuffleOptions: true } : {}),
+    },
+  });
   await logAudit({ actorId: actor.id, action: "quiz.publish", entityType: "Quiz", entityId: id, meta: { scoring: quiz.scoring } });
 }
 

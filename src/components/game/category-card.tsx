@@ -79,7 +79,9 @@ export type CategoryCardData = {
   activeQuiz: { closesAt: Date; unplayed: number } | null;
   nextOpensAt: Date | null;
   bestK: number;
-  frequencyDays: number;
+  cadence: string | null;
+  /** Portada de la categoría (src + srcSet 600/1200). */
+  cover: { src: string; srcSet?: string } | null;
 };
 
 /**
@@ -108,6 +110,17 @@ export function CategoryCard({
 
   return (
     <Card className={cn("relative flex flex-col transition-colors hover:border-primary/60", isMember && "border-primary/30")}>
+      {data.cover && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={data.cover.src}
+          srcSet={data.cover.srcSet}
+          sizes="(min-width: 768px) 480px, 100vw"
+          alt=""
+          loading="lazy"
+          className="aspect-[2/1] w-full object-cover"
+        />
+      )}
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between gap-2 text-base">
           <Link href={`/categorias/${c.slug}`} className="flex min-w-0 items-center gap-2 after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none">
@@ -155,7 +168,7 @@ export function CategoryCard({
           ) : null}
           <li className="flex items-center gap-1.5">
             <Users className="size-3.5" aria-hidden /> {data.participants} {data.participants === 1 ? "participante" : "participantes"} · suman los{" "}
-            {data.bestK} mejores · uno cada {data.frequencyDays} {data.frequencyDays === 1 ? "día" : "días"}
+            {data.bestK} mejores{data.cadence && ` · uno nuevo ${data.cadence}`}
           </li>
         </ul>
 

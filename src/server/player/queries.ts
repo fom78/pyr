@@ -1,4 +1,6 @@
+import { describeCadence } from "@/server/autoquiz/slots";
 import { prisma } from "@/server/db";
+import { coverImage } from "@/server/storage";
 import { getQuizStatus, STATUS_DISPLAY_ORDER } from "@/server/quiz/status";
 import { checkJoin, effectiveStatus, leaveDates } from "@/server/league/lives";
 import { getLivesSummary } from "@/server/league/service";
@@ -8,6 +10,14 @@ import { positionOf, sliceAround } from "@/server/ranking/compute";
 const DAY = 86_400_000;
 const FINISHED = ["FINISHED", "TIMED_OUT"] as const;
 const STANDING_USER = { user: { select: { id: true, name: true, username: true, image: true } } } as const;
+
+
+const CADENCE = { select: { enabled: true, frequencyHours: true, excludedWeekdays: true } } as const;
+
+/** "todos los días salvo dom" si la categoría tiene calendario automático activo. */
+function cadenceOf(schedule: { enabled: boolean; frequencyHours: number; excludedWeekdays: number[] } | null) {
+  return schedule?.enabled ? describeCadence(schedule) : null;
+}
 
 /** Datos de la pantalla de inicio del jugador. */
 export async function getHomeData(userId: string, now = new Date()) {
@@ -70,7 +80,7 @@ export async function getLeagueOverview(userId: string, now = new Date()) {
     prisma.category.findMany({
       where: { active: true },
       orderBy: { name: "asc" },
-      include: { _count: { select: { memberships: { where: { status: "ACTIVE" } } } } },
+      include: { _count: { select: { memberships: { where: { status: "ACTIVE" } } } }, schedule: CADENCE },
     }),
     getLivesSummary(userId, now),
   ]);
@@ -128,7 +138,8 @@ export async function getLeagueOverview(userId: string, now = new Date()) {
         activeQuiz: active.length ? { closesAt: active[0].closesAt, unplayed: active.filter((q) => !played.has(q.id)).length } : null,
         nextOpensAt: next?.opensAt ?? null,
         bestK: s["ranking.bestK"],
-        frequencyDays: s["quiz.frequencyDays"],
+        cadence: cadenceOf(c.schedule),
+        cover: coverImage(c.imageKey),
       };
     }),
   );
@@ -141,7 +152,7 @@ export async function getLeagueOverview(userId: string, now = new Date()) {
 export async function getCategoryPageData(slug: string, userId: string, now = new Date()) {
   const category = await prisma.category.findUnique({
     where: { slug },
-    include: { _count: { select: { memberships: { where: { status: "ACTIVE" } } } } },
+    include: { _count: { select: { memberships: { where: { status: "ACTIVE" } } } }, schedule: CADENCE },
   });
   if (!category) return null;
   const [memberships, quizzes, top, settings, myStreak, myStanding, rankedCount] = await Promise.all([
@@ -224,6 +235,9 @@ export async function getCategoryPageData(slug: string, userId: string, now = ne
     top,
     myStanding,
     settings,
+    cadence: cadenceOf(category.schedule),
+    cover: coverImage(category.imageKey),
+    now,
     streak: myStreak,
     /** Fechas que tendría si abandona ahora (para el diálogo de confirmación). */
     leavePreview: leaveDates(now, settings["league.leaveCooldownDays"], settings["league.rejoinBlockDays"]),

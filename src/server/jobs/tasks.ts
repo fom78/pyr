@@ -1,11 +1,14 @@
 import { prisma } from "@/server/db";
 import { logger } from "@/server/logger";
-import { fillIncompleteDrafts, generateDrafts, handleDueDrafts, notifyCoverage, notifyDrafts } from "@/server/autoquiz/service";
+import { fillIncompleteDrafts, generateDrafts, handleDueDrafts, notifyCoverage, notifyDrafts, rescueSlots } from "@/server/autoquiz/service";
 import { expireStaleAttempts } from "@/server/game/engine";
 import { releaseExpiredLeaves } from "@/server/league/service";
 import { recomputeAllStandings, recomputeForQuiz } from "@/server/ranking/service";
 import { purgeRateBuckets } from "@/server/ratelimit";
 import { finishDueTournaments } from "@/server/tournaments/service";
+import { notifyReviewReady } from "@/server/quiz/review-notify";
+import { notifyQuizOpened, notifyStreakRisk, sendWeeklySummaries } from "@/server/notifications/player";
+import { ensureCoverVariants } from "@/server/storage/images";
 
 /**
  * Sincroniza la columna caché Quiz.status con lo que dicen las fechas y recalcula las tablas
@@ -46,12 +49,31 @@ async function runAutoQuizzes(now = new Date()) {
   const filled = await fillIncompleteDrafts(now);
   const due = await handleDueDrafts(now);
   const generated = await generateDrafts(now);
+  // Turnos urgentes sin cuestionario: se arman y publican solos si la categoría lo permite (antes de avisar).
+  const rescued = await rescueSlots(now);
   const notified = await notifyDrafts(now);
-  return { ...due, ...filled, ...generated, notified: notified.sent };
+  return { ...due, ...filled, ...generated, ...rescued, notified: notified.sent };
+}
+
+async function runCoverVariants() {
+  const [categories, tournaments] = await Promise.all([
+    prisma.category.findMany({ where: { imageKey: { not: null } }, select: { imageKey: true } }),
+    prisma.tournament.findMany({ where: { imageKey: { not: null } }, select: { imageKey: true } }),
+  ]);
+  const created = await ensureCoverVariants([...categories, ...tournaments].map((x) => x.imageKey!));
+  return { created };
 }
 
 export const tasks = {
   "quiz-status-sync": { cron: "* * * * *", run: () => syncQuizStatuses() },
+  // Al cerrar un cuestionario: "ya podés ver la corrección" a quienes lo jugaron.
+  "review-ready": { cron: "* * * * *", run: () => notifyReviewReady() },
+  // Al abrir un cuestionario de liga: "nuevo cuestionario disponible" a los participantes.
+  "quiz-opened": { cron: "* * * * *", run: () => notifyQuizOpened() },
+  // Racha en riesgo: cierra pronto uno que el jugador todavía no jugó.
+  "streak-risk": { cron: "*/15 * * * *", run: () => notifyStreakRisk() },
+  // Lunes a la mañana: puesto, racha y mejor puntaje de la semana.
+  "weekly-summary": { cron: "0 9 * * 1", run: () => sendWeeklySummaries() },
   "attempts-expire": { cron: "* * * * *", run: () => expireStaleAttempts() },
   "memberships-release": { cron: "*/10 * * * *", run: () => releaseExpiredLeaves() },
   "tournaments-finish": { cron: "*/5 * * * *", run: () => finishDueTournaments() },
@@ -61,6 +83,8 @@ export const tasks = {
   autoquiz: { cron: "*/15 * * * *", run: () => runAutoQuizzes() },
   // Una vez por día en horario de trabajo: ¿alcanzan las preguntas nuevas para los próximos turnos?
   "bank-coverage": { cron: "0 9 * * *", run: () => notifyCoverage() },
+  // Variante chica de las portadas subidas antes de que existiera (idempotente).
+  "cover-variants": { cron: "30 4 * * *", run: () => runCoverVariants() },
 } as const;
 
 export type TaskName = keyof typeof tasks;

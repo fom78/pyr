@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   name: string;
-  preset: "question" | "option" | "cover" | "avatar";
+  preset: "question" | "option" | "cover" | "avatar" | "ticket";
   defaultKey?: string | null;
   defaultUrl?: string | null;
   label?: string;

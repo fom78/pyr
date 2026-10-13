@@ -31,9 +31,16 @@ RUN --mount=type=cache,target=/root/.npm npm ci --omit=dev --ignore-scripts
 # ── Runtime ──
 FROM node:${NODE_VERSION} AS runner
 WORKDIR /app
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 STORAGE_LOCAL_DIR=/app/storage/uploads
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /app/storage/uploads && chown -R node:node /app
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0 STORAGE_LOCAL_DIR=/app/storage/uploads BACKUP_DIR=/app/backups
+# pg_dump para los backups (los genera el worker). Tiene que ser >= la versión del servidor (17):
+# Debian bookworm trae el 15, así que se instala desde el repo oficial de PostgreSQL (PGDG).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tini curl \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y --no-install-recommends postgresql-client-17 \
+    && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app/storage/uploads /app/backups && chown -R node:node /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
@@ -43,7 +50,7 @@ COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/prisma.config.ts /app/package.json ./
 USER node
 EXPOSE 3000
-VOLUME ["/app/storage/uploads"]
+VOLUME ["/app/storage/uploads", "/app/backups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 ENTRYPOINT ["/usr/bin/tini", "--"]

@@ -24,6 +24,8 @@ export type Action =
   | "settings.manage"
   | "rules.edit"
   | "audit.view"
+  | "backup.manage" // generar y descargar backups (solo admin)
+  | "ticket.manage" // atender tickets de soporte
   | "play";
 
 export type Actor = {
@@ -49,6 +51,7 @@ const MOD_ACTIONS = new Set<Action>([
   "quiz.manage",
   "tournament.manage",
   "user.list",
+  "ticket.manage",
   "play",
 ]);
 

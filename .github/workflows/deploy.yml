@@ -35,10 +35,8 @@ jobs:
         run: |
           if [ "$BRANCH" = "main" ]; then
             echo "env=prod" >> "$GITHUB_OUTPUT"
-            echo "profiles=--profile backup" >> "$GITHUB_OUTPUT"
           else
             echo "env=dev" >> "$GITHUB_OUTPUT"
-            echo "profiles=" >> "$GITHUB_OUTPUT"
           fi
           echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
           echo "tag=${BRANCH}-${SHA::7}" >> "$GITHUB_OUTPUT"
@@ -63,7 +61,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Copia la definición del stack (compose + scripts de backup) al servidor
+      # Copia la definición del stack al servidor (los backups los hace el worker)
       - name: Copiar stack
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -71,7 +69,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
-          source: "docker/compose.prod.yml,docker/backup/*"
+          source: "docker/compose.prod.yml"
           target: /opt/pyr/${{ steps.vars.outputs.env }}
           strip_components: 1
 
@@ -86,9 +84,9 @@ jobs:
             set -e
             cd /opt/pyr/${{ steps.vars.outputs.env }}
             sed -i "s|^PYR_IMAGE=.*|PYR_IMAGE=${{ steps.vars.outputs.image }}|; s|^PYR_TAG=.*|PYR_TAG=${{ steps.vars.outputs.tag }}|" .env
-            docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml ${{ steps.vars.outputs.profiles }} pull
+            docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml pull
             # `migrate` corre primero (migraciones + seed idempotente); web y worker arrancan solo si termina bien
-            docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml ${{ steps.vars.outputs.profiles }} up -d --remove-orphans
+            docker compose -p pyr-${{ steps.vars.outputs.env }} -f compose.prod.yml up -d --remove-orphans
             docker image prune -f
             for i in $(seq 1 30); do
               s=$(docker inspect -f '{{.State.Health.Status}}' pyr-${{ steps.vars.outputs.env }}-web-1 2>/dev/null || true)

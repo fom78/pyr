@@ -11,13 +11,14 @@ const PRESET_PERMISSION: Record<ImagePreset, Action> = {
   option: "question.create",
   cover: "category.manage",
   avatar: "play",
+  ticket: "play",
 };
 
 /** Subida de una imagen (multipart: file, preset). Devuelve { key, url }. */
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
-    const preset = z.enum(["question", "option", "cover", "avatar"]).parse(form.get("preset"));
+    const preset = z.enum(["question", "option", "cover", "avatar", "ticket"]).parse(form.get("preset"));
     const user = await authorize(PRESET_PERMISSION[preset]);
     await assertRateLimit(`upload:${user.id}`, 60, 600);
     const file = form.get("file");

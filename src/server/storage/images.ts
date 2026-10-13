@@ -5,13 +5,15 @@ import { newKey, smallVariantKey, storage } from "./index";
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const ACCEPTED = new Set(["jpeg", "png", "webp", "gif", "avif", "heif", "tiff"]);
 
-export type ImagePreset = "question" | "option" | "avatar" | "cover";
+export type ImagePreset = "question" | "option" | "avatar" | "cover" | "ticket";
 
 const PRESETS: Record<ImagePreset, { width: number; height?: number; fit: "inside" | "cover"; quality: number }> = {
   question: { width: 1280, fit: "inside", quality: 80 },
   option: { width: 480, fit: "inside", quality: 80 },
   avatar: { width: 256, height: 256, fit: "cover", quality: 80 },
   cover: { width: 1200, height: 630, fit: "cover", quality: 80 },
+  // Captura de pantalla de un ticket de soporte: tiene que leerse el texto.
+  ticket: { width: 1600, fit: "inside", quality: 82 },
 };
 
 /** Redimensiona, comprime a WebP, quita metadatos (EXIF/GPS) y guarda. Devuelve el key. */

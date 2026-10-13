@@ -54,6 +54,10 @@ model User {
   quizzesCreated     Quiz[]
   tournamentsCreated Tournament[]
   notifications      Notification[]
+  backupsRequested   Backup[]
+  tickets            Ticket[]             @relation("TicketAuthor")
+  ticketsAssigned    Ticket[]             @relation("TicketAssignee")
+  ticketEvents       TicketEvent[]
 }
 
 model Session {
@@ -677,4 +681,103 @@ model Notification {
 
   @@unique([userId, dedupeKey])
   @@index([userId, audience, readAt])
+}
+
+// ───────────────────────────── Backups ─────────────────────────────
+
+enum BackupStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+enum BackupKind {
+  MANUAL
+  SCHEDULED
+}
+
+/// Backup de la base (+ imágenes con storage local). Lo genera el worker; los archivos viven en BACKUP_DIR.
+model Backup {
+  id            String       @id @default(cuid())
+  kind          BackupKind
+  status        BackupStatus @default(PENDING)
+  dbFile        String? // nombre del archivo (nunca una ruta)
+  uploadsFile   String?
+  dbBytes       BigInt?
+  uploadsBytes  BigInt?
+  error         String?
+  requestedById String?
+  requestedBy   User?        @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+
+  @@index([status, createdAt])
+}
+
+// ───────────────────────────── Soporte ─────────────────────────────
+
+enum TicketType {
+  BUG
+  SUGGESTION
+  OTHER
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  ANSWERED
+  CLOSED
+}
+
+enum TicketEventKind {
+  CREATED
+  TAKEN
+  RELEASED
+  ANSWERED
+  FEEDBACK
+  NOTE
+  CLOSED
+  REOPENED
+}
+
+/// Reporte de bug o sugerencia de un jugador. No es un chat: respuestas del equipo y un feedback por respuesta.
+model Ticket {
+  id         String        @id @default(cuid())
+  number     Int           @unique @default(autoincrement())
+  userId     String
+  user       User          @relation("TicketAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  type       TicketType
+  title      String
+  body       String
+  pageUrl    String?
+  userAgent  String?
+  imageKey   String?
+  status     TicketStatus  @default(OPEN)
+  assigneeId String?
+  assignee   User?         @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  rounds     Int           @default(0) // respuestas enviadas (tope en tickets/rules.ts)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  closedAt   DateTime?
+  events     TicketEvent[]
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@index([assigneeId, status])
+}
+
+model TicketEvent {
+  id        String          @id @default(cuid())
+  ticketId  String
+  ticket    Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  kind      TicketEventKind
+  body      String? // respuesta, comentario del usuario o nota interna (NOTE: nunca se muestra al usuario)
+  helpful   Boolean? // solo en FEEDBACK
+  createdAt DateTime        @default(now())
+
+  @@index([ticketId, createdAt])
 }

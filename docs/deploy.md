@@ -4,7 +4,7 @@ Arquitectura en la VPS (pensada para convivir con otras apps):
 
 ```
 Internet ─► Caddy (stack "proxy", puertos 80/443, HTTPS automático)
-              ├─ trivia.midominio.com      → pyr-prod-web:3000   (stack pyr-prod: web, worker, db, backup)
+              ├─ trivia.midominio.com      → pyr-prod-web:3000   (stack pyr-prod: web, worker, db)
               ├─ dev.trivia.midominio.com  → pyr-dev-web:3000    (stack pyr-dev:  web, worker, db)
               └─ otra-app.midominio.com    → …                    (cada app agrega su archivo en sites/)
 ```
@@ -118,7 +118,8 @@ Valores que **cambian por entorno**:
 | `POSTGRES_PASSWORD` | una clave | **otra** clave |
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 32` | otro distinto |
 | `SEED_DEMO` | `false` | `true` (datos de prueba en la primera carga) |
-| `BACKUP_DIR` | `/opt/pyr/prod/backups` | — |
+| `APP_ENV` | `prod` | `dev` |
+| `BACKUP_DIR` | `/opt/pyr/prod/backups` | `/opt/pyr/dev/backups` |
 
 Login en el registro de imágenes (una vez; usar un *Personal Access Token* con permiso `read:packages`):
 
@@ -130,14 +131,14 @@ El primer deploy lo hace GitHub Actions (paso 5). Para levantarlo a mano:
 
 ```bash
 cd /opt/pyr/prod
-docker compose -p pyr-prod -f compose.prod.yml --profile backup up -d
+docker compose -p pyr-prod -f compose.prod.yml up -d
 docker compose -p pyr-prod -f compose.prod.yml logs -f migrate web
 ```
 
 ## 5. CI/CD con GitHub Actions
 
 - `.github/workflows/ci.yml`: en cada push/PR corre lint, typecheck, tests (Vitest con Postgres), build y E2E (Playwright).
-- `.github/workflows/deploy.yml`: cuando el CI pasa en `dev` → despliega **staging**; en `main` → **producción**. Construye la imagen, la publica en GHCR con tag `<rama>-<sha>`, copia `compose.prod.yml` + scripts de backup a `/opt/pyr/<env>`, actualiza `PYR_TAG` en el `.env` y hace `pull` + `up -d`. Espera a que `web` quede *healthy*.
+- `.github/workflows/deploy.yml`: cuando el CI pasa en `dev` → despliega **staging**; en `main` → **producción**. Construye la imagen, la publica en GHCR con tag `<rama>-<sha>`, copia `compose.prod.yml` a `/opt/pyr/<env>`, actualiza `PYR_TAG` en el `.env` y hace `pull` + `up -d`. Espera a que `web` quede *healthy*.
 
 En GitHub → *Settings*:
 
@@ -152,27 +153,42 @@ Flujo de trabajo: desarrollar en `dev` → push → se ve en `dev.trivia…` →
 ```bash
 cd /opt/pyr/prod
 sed -i 's/^PYR_TAG=.*/PYR_TAG=main-<sha-anterior>/' .env
-docker compose -p pyr-prod -f compose.prod.yml --profile backup up -d
+docker compose -p pyr-prod -f compose.prod.yml up -d
 ```
 
 (Las migraciones de Prisma no se revierten solas: si una migración rompió algo, corregir con una migración nueva.)
 
 ## 6. Backups
 
-El servicio `backup` (solo prod, `--profile backup`) hace `pg_dump` comprimido todos los días a las 03:30 (`BACKUP_CRON`) en `BACKUP_DIR` y borra los de más de `BACKUP_RETENTION_DAYS` días.
+Los hace el **worker** en cada entorno (prod y staging): la base (`pg_dump` → `.sql.gz`) y, con storage local, las imágenes subidas (`-uploads.tar.gz`).
 
-- Recomendado: sincronizar `/opt/pyr/prod/backups` fuera de la VPS (rclone a un bucket, o el snapshot del proveedor).
-- Backup manual: `docker compose -p pyr-prod -f compose.prod.yml exec backup sh /usr/local/bin/backup.sh`
-- **Restaurar** (detiene la app mientras tanto):
+- **Diario** a las 03:30 (tarea `backup-nightly`) y **a pedido** desde el panel: **Backups → Crear backup ahora** (solo admins). Se descargan desde la misma página.
+- Quedan en `BACKUP_DIR` del host (`/opt/pyr/<env>/backups`, montado en `/app/backups`). Se borran los de más de `BACKUP_RETENTION_DAYS` días (los manuales duran el doble).
+- Nombre: `pyr-<APP_ENV>-AAAAMMDD-HHMMSS.sql.gz` (hora de Buenos Aires). Si falta `APP_ENV` se deduce del dominio.
+- La carpeta tiene que ser escribible por el uid 1000 (usuario `node` de la imagen): `sudo chown 1000:deploy /opt/pyr/<env>/backups && sudo chmod 775 /opt/pyr/<env>/backups` (`vps-setup.sh` ya lo deja así).
+- Si un backup falla, los admins reciben un aviso CRITICAL en el panel.
+
+**Traerlo a la PC** (con `PYR_SSH=deploy@<vps>` en `.env.local`):
+
+```bash
+bash scripts/backup-pull.sh prod                     # último backup → ./backups/prod/
+bash scripts/backup-pull.sh dev --images             # staging, con imágenes
+bash scripts/backup-pull.sh prod --images --restore  # y lo carga en la base local (pide confirmación y guarda una copia antes)
+```
+
+**Restaurar en la VPS** (detiene la app mientras tanto):
 
 ```bash
 cd /opt/pyr/prod
 docker compose -p pyr-prod -f compose.prod.yml stop web worker
-gunzip -c backups/pyr-AAAAMMDD-HHMMSS.sql.gz | docker compose -p pyr-prod -f compose.prod.yml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" && psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+gunzip -c backups/pyr-prod-AAAAMMDD-HHMMSS.sql.gz | docker compose -p pyr-prod -f compose.prod.yml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" && psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+# imágenes (opcional): docker run --rm -v pyr-prod_uploads:/d -v $PWD/backups:/b alpine tar xzf /b/pyr-prod-AAAAMMDD-HHMMSS-uploads.tar.gz -C /d
 docker compose -p pyr-prod -f compose.prod.yml up -d
 ```
 
-Las imágenes subidas viven en el volumen `pyr-prod_uploads`; incluirlas en la copia externa (`docker run --rm -v pyr-prod_uploads:/d -v $PWD:/b alpine tar czf /b/uploads.tgz -C /d .`) o pasar a S3 (`STORAGE_DRIVER=s3`).
+Recomendado además: copiar `/opt/pyr/prod/backups` fuera de la VPS (rclone a un bucket, o el snapshot del proveedor), o pasar las imágenes a S3 (`STORAGE_DRIVER=s3`; entonces el backup es solo la base).
+
+> Antes el backup lo hacía un contenedor aparte (`backup`, `--profile backup`). Ya no existe: el deploy lo elimina solo (`--remove-orphans`). En una VPS ya instalada, agregar `APP_ENV=prod` / `APP_ENV=dev` al `.env` de cada entorno y ajustar el dueño de la carpeta de backups como se indica arriba.
 
 ## 7. Operación
 
@@ -188,7 +204,7 @@ docker compose -p pyr-prod -f compose.prod.yml run --rm migrate node dist/seed.m
 ```bash
 docker build -t pyr:local .
 docker network create proxy
-# en una carpeta temporal: compose.prod.yml + backup/ + .env con PYR_IMAGE=pyr, PYR_TAG=local,
+# en una carpeta temporal: compose.prod.yml + .env con PYR_IMAGE=pyr, PYR_TAG=local,
 # APP_URL=https://pyr.localhost, y en el Caddyfile un sitio "pyr.localhost { tls internal; reverse_proxy pyr-prod-web:3000 }"
-docker compose -p pyr-localprod -f compose.prod.yml --profile backup up -d
+docker compose -p pyr-localprod -f compose.prod.yml up -d
 ```

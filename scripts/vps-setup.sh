@@ -274,7 +274,9 @@ step "9. Entornos de PyR"
 : >"$CRED_FILE.tmp"
 make_env() { # make_env <prod|dev> <dominio> <tag> <seed_demo>
   local env=$1 domain=$2 tag=$3 seed=$4 dir=/opt/pyr/$1
-  install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$dir" "$dir/backups"
+  install -d -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$dir"
+  # Los backups los escribe el worker como uid 1000 (usuario `node` de la imagen); deploy los lee para bajarlos.
+  install -d -o 1000 -g "$DEPLOY_USER" -m 775 "$dir/backups"
   if [ -f "$dir/.env" ]; then
     info "$dir/.env ya existía (no se modifica)."
     return
@@ -304,8 +306,9 @@ SEED_DEMO=$seed
 
 STORAGE_DRIVER=local
 
+# Backups (los hace el worker: diario 03:30 y a pedido desde el panel)
+APP_ENV=$env
 BACKUP_RETENTION_DAYS=14
-BACKUP_CRON=30 3 * * *
 BACKUP_DIR=$dir/backups
 TZ=America/Argentina/Buenos_Aires
 EOF

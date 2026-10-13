@@ -12,6 +12,8 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql://${POSTGRES_USER:-pyr}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-pyr}
     NODE_ENV: production
+    # BACKUP_DIR del .env es la carpeta del host (se monta abajo); adentro siempre es /app/backups.
+    BACKUP_DIR: /app/backups
   networks: [internal]
 
 services:
@@ -43,6 +45,8 @@ services:
     <<: *app
     volumes:
       - uploads:/app/storage/uploads
+      # Solo lectura: la web lista y sirve las descargas de backups; los genera el worker.
+      - ${BACKUP_DIR:-./backups}:/app/backups:ro
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks:
@@ -53,31 +57,15 @@ services:
   worker:
     <<: *app
     command: ["node", "dist/worker.mjs"]
+    # Imágenes compartidas con web (la tarea cover-variants escribe ahí y el backup las empaqueta).
+    # Backups (base + imágenes): diario a las 03:30 y a pedido desde el panel. La carpeta del host
+    # tiene que ser escribible por el uid 1000 (usuario `node` del contenedor).
+    volumes:
+      - uploads:/app/storage/uploads
+      - ${BACKUP_DIR:-./backups}:/app/backups
     healthcheck: { disable: true }
     depends_on:
       migrate: { condition: service_completed_successfully }
-
-  # Backups diarios con pg_dump (habilitar con --profile backup; en la VPS solo en producción).
-  backup:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    profiles: [backup]
-    environment:
-      PGHOST: db
-      PGUSER: ${POSTGRES_USER:-pyr}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      PGDATABASE: ${POSTGRES_DB:-pyr}
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
-      BACKUP_CRON: ${BACKUP_CRON:-30 3 * * *}
-      TZ: ${TZ:-America/Argentina/Buenos_Aires}
-    volumes:
-      - ${BACKUP_DIR:-./backups}:/backups
-      - ./backup/backup.sh:/usr/local/bin/backup.sh:ro
-      - ./backup/entrypoint.sh:/entrypoint.sh:ro
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
-    depends_on:
-      db: { condition: service_healthy }
-    networks: [internal]
 
 volumes:
   db:

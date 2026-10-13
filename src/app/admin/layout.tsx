@@ -5,19 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Logo } from "@/components/layout/logo";
 import { unreadCount } from "@/server/notifications/service";
+import { untakenCount } from "@/server/tickets/service";
 import { AdminNav, type AdminNavItem } from "./admin-nav";
 
 export const metadata = { title: { default: "Administración", template: "%s · Admin PyR" } };
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const user = await requirePermission("admin.access");
-  const [settings, users, audit, rules, unread] = await Promise.all([
+  const [settings, users, audit, rules, unread, support, backups] = await Promise.all([
     userCan(user, "settings.manage"),
     userCan(user, "user.list"),
     userCan(user, "audit.view"),
     userCan(user, "rules.edit"),
     unreadCount(user.id, "STAFF"),
+    userCan(user, "ticket.manage"),
+    userCan(user, "backup.manage"),
   ]);
+  const untaken = support ? await untakenCount() : 0;
   const items: AdminNavItem[] = [
     { href: "/admin", label: "Dashboard", icon: "gauge", exact: true },
     { href: "/admin/notificaciones", label: "Notificaciones", icon: "bell", badge: unread },
@@ -28,10 +32,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/cuestionarios", label: "Cuestionarios", icon: "list" },
     { href: "/admin/cuestionarios/por-aprobar", label: "Por aprobar", icon: "approve" },
     { href: "/admin/torneos", label: "Torneos", icon: "trophy" },
+    ...(support ? [{ href: "/admin/soporte", label: "Soporte", icon: "support", badge: untaken } as const] : []),
     ...(users ? [{ href: "/admin/usuarios", label: "Usuarios", icon: "users" } as const] : []),
     ...(settings ? [{ href: "/admin/config", label: "Configuración", icon: "settings" } as const] : []),
     ...(rules ? [{ href: "/admin/reglas", label: "Textos de reglas", icon: "book" } as const] : []),
     ...(audit ? [{ href: "/admin/auditoria", label: "Auditoría", icon: "scroll" } as const] : []),
+    ...(backups ? [{ href: "/admin/backups", label: "Backups", icon: "backup" } as const] : []),
   ];
   return (
     <div className="flex min-h-dvh flex-1">

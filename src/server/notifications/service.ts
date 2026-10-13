@@ -26,6 +26,11 @@ export async function notifyStaff(input: NotificationInput, now = new Date(), db
   );
 }
 
+/** Aviso del panel para una persona puntual del equipo (ej. quien tomó un ticket). */
+export async function notifyStaffUser(userId: string, input: NotificationInput, db: Db = prisma) {
+  return createFor([userId], "STAFF", input, db);
+}
+
 /** Avisos del juego para jugadores puntuales (campanita del jugador). */
 export async function notifyUsers(userIds: string[], input: NotificationInput, db: Db = prisma) {
   return createFor(userIds, "PLAYER", input, db);

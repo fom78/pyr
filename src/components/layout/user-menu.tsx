@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Coins, History, LogOut, Moon, Shield, Sun, User } from "lucide-react";
+import { Coins, History, LifeBuoy, LogOut, MessageSquareWarning, Moon, Shield, Sun, User } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,9 @@ type Props = {
 export function UserMenu({ name, username, image, showAdmin }: Props) {
   const { resolvedTheme, setTheme } = useTheme();
   const initials = name.slice(0, 2).toUpperCase();
+  // El reporte guarda la página desde la que se abrió (ayuda a reproducir errores).
+  const pathname = usePathname();
+  const from = pathname.startsWith("/soporte") ? "" : `?desde=${encodeURIComponent(pathname)}`;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -54,6 +58,17 @@ export function UserMenu({ name, username, image, showAdmin }: Props) {
         <DropdownMenuItem asChild>
           <Link href="/creditos">
             <Coins /> Créditos
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href={`/soporte/nuevo${from}`}>
+            <MessageSquareWarning /> Reportar un problema o sugerir
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/soporte">
+            <LifeBuoy /> Mis reportes
           </Link>
         </DropdownMenuItem>
         {showAdmin && (

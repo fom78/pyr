@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/common";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate, formatDateTime, formatNumber } from "@/lib/format";
 import { coverageMessage, listBankCoverage, listPendingDrafts, unreadySlots } from "@/server/autoquiz/service";
+import { untakenCount } from "@/server/tickets/service";
 
 export const metadata = { title: "Dashboard" };
 
@@ -48,11 +49,12 @@ export default async function DashboardPage() {
     }),
   ]);
   const maxAttempts = Math.max(1, ...recentQuizzes.map((q) => q._count.attempts));
-  const [coverage, drafts, unready, skipped] = await Promise.all([
+  const [coverage, drafts, unready, skipped, untaken] = await Promise.all([
     listBankCoverage(now),
     listPendingDrafts(now),
     unreadySlots(now, 72),
     prisma.auditLog.findMany({ where: { action: "quiz.autoSkipped", createdAt: { gte: weekAgo } }, orderBy: { createdAt: "desc" }, take: 5 }),
+    untakenCount(),
   ]);
   const critical = coverage.filter((c) => c.coverage.level === "CRITICAL");
   const lowCoverage = coverage.filter((c) => c.coverage.level !== "OK").length;
@@ -90,6 +92,7 @@ export default async function DashboardPage() {
           hint={unready.some((u) => !u.quiz) ? `${unready.filter((u) => !u.quiz).length} sin asignar` : undefined}
           href="/admin/preguntas/cobertura"
         />
+        <Stat label="Tickets de soporte sin tomar" value={untaken} href="/admin/soporte" />
       </div>
       <Card>
         <CardHeader>

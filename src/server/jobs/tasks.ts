@@ -9,6 +9,8 @@ import { finishDueTournaments } from "@/server/tournaments/service";
 import { notifyReviewReady } from "@/server/quiz/review-notify";
 import { notifyQuizOpened, notifyStreakRisk, sendWeeklySummaries } from "@/server/notifications/player";
 import { ensureCoverVariants } from "@/server/storage/images";
+import { runPendingBackups, scheduleNightlyBackup } from "@/server/backups/service";
+import { autoCloseAnswered } from "@/server/tickets/service";
 
 /**
  * Sincroniza la columna caché Quiz.status con lo que dicen las fechas y recalcula las tablas
@@ -83,6 +85,11 @@ export const tasks = {
   autoquiz: { cron: "*/15 * * * *", run: () => runAutoQuizzes() },
   // Una vez por día en horario de trabajo: ¿alcanzan las preguntas nuevas para los próximos turnos?
   "bank-coverage": { cron: "0 9 * * *", run: () => notifyCoverage() },
+  // Backups: los pedidos desde el panel (cada minuto) y el diario (base + imágenes, con retención).
+  backups: { cron: "* * * * *", run: () => runPendingBackups() },
+  "backup-nightly": { cron: "30 3 * * *", run: () => scheduleNightlyBackup() },
+  // Tickets respondidos sin feedback del usuario: se cierran solos.
+  "tickets-autoclose": { cron: "0 5 * * *", run: () => autoCloseAnswered() },
   // Variante chica de las portadas subidas antes de que existiera (idempotente).
   "cover-variants": { cron: "30 4 * * *", run: () => runCoverVariants() },
 } as const;

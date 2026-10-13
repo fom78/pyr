@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Archive,
   Bell,
   BookOpen,
   CalendarCheck,
@@ -10,6 +11,7 @@ import {
   Gauge,
   Grid3x3,
   HelpCircle,
+  LifeBuoy,
   List,
   ScrollText,
   Settings,
@@ -34,6 +36,8 @@ const ICONS = {
   bell: Bell,
   approve: CalendarCheck,
   database: Database,
+  support: LifeBuoy,
+  backup: Archive,
 };
 
 export type AdminNavItem = { href: string; label: string; icon: keyof typeof ICONS; exact?: boolean; badge?: number };

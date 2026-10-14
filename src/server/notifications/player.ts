@@ -55,34 +55,61 @@ export async function currentStreaks(
 
 /**
  * "Nuevo cuestionario disponible": cuando abre un cuestionario de liga, avisa a los participantes
- * de la categoría (`notify.newQuiz`). Idempotente: marca `openNotifiedAt` y deduplica por cuestionario.
+ * de la categoría o a los inscriptos del torneo (`notify.newQuiz`). Idempotente: marca `openNotifiedAt` y deduplica por cuestionario.
  */
 export async function notifyQuizOpened(now = new Date(), db: Db = prisma) {
   const due = await db.quiz.findMany({
-    where: { publishedAt: { not: null }, tournamentId: null, categoryId: { not: null }, opensAt: { lte: now }, openNotifiedAt: null },
-    include: { category: true },
+    where: {
+      publishedAt: { not: null },
+      opensAt: { lte: now },
+      openNotifiedAt: null,
+      OR: [{ tournamentId: null, categoryId: { not: null } }, { tournament: { status: "PUBLISHED" } }],
+    },
+    include: { category: true, tournament: { select: { id: true, name: true, slug: true } } },
     orderBy: { opensAt: "asc" },
     take: BATCH,
   });
   let sent = 0;
   for (const quiz of due) {
-    const category = quiz.category!;
-    const s = await getCategorySettings(category, db);
     const fresh = quiz.closesAt > now && now.getTime() - quiz.opensAt.getTime() < STALE_OPEN_MS;
-    if (s["notify.newQuiz"] && fresh) {
-      const members = await activeMembers(category.id, now, db);
-      sent += await notifyUsers(
-        members.map((m) => m.userId),
-        {
-          level: "INFO",
-          kind: "quiz.opened",
-          title: `${category.icon ? `${category.icon} ` : ""}Nuevo cuestionario en ${category.name}`,
-          body: `“${quiz.title}” ya está abierto. Podés jugarlo hasta el ${formatDateTime(quiz.closesAt)}.`,
-          href: `/categorias/${category.slug}`,
-          dedupeKey: `quiz.opened:${quiz.id}`,
-        },
-        db,
-      );
+    const body = `“${quiz.title}” ya está abierto. Podés jugarlo hasta el ${formatDateTime(quiz.closesAt)}.`;
+    if (fresh && quiz.tournament) {
+      // Torneo: a los inscriptos (no baneados).
+      if ((await getSettings(db))["notify.newQuiz"]) {
+        const entries = await db.tournamentEntry.findMany({
+          where: { tournamentId: quiz.tournament.id, user: { bans: { none: activeBanWhere(now) } } },
+          select: { userId: true },
+        });
+        sent += await notifyUsers(
+          entries.map((e) => e.userId),
+          {
+            level: "INFO",
+            kind: "quiz.opened",
+            title: `🏆 Nueva fecha en ${quiz.tournament.name}`,
+            body,
+            href: `/torneos/${quiz.tournament.slug}`,
+            dedupeKey: `quiz.opened:${quiz.id}`,
+          },
+          db,
+        );
+      }
+    } else if (fresh && quiz.category) {
+      const category = quiz.category;
+      if ((await getCategorySettings(category, db))["notify.newQuiz"]) {
+        const members = await activeMembers(category.id, now, db);
+        sent += await notifyUsers(
+          members.map((m) => m.userId),
+          {
+            level: "INFO",
+            kind: "quiz.opened",
+            title: `${category.icon ? `${category.icon} ` : ""}Nuevo cuestionario en ${category.name}`,
+            body,
+            href: `/categorias/${category.slug}`,
+            dedupeKey: `quiz.opened:${quiz.id}`,
+          },
+          db,
+        );
+      }
     }
     await db.quiz.update({ where: { id: quiz.id }, data: { openNotifiedAt: now } });
   }

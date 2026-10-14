@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Tournament" ADD COLUMN     "skippedSlots" TIMESTAMP(3)[];
+

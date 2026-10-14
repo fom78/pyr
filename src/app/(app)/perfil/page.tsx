@@ -8,15 +8,18 @@ import { PageHeader } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
+import { getTournamentStats } from "@/server/player/tournament-stats";
+import { TournamentStatsCard } from "@/components/game/tournament-stats-card";
 import { PasswordForm, ProfileForm, LinkGoogle, ThemeSwitcher } from "./forms";
 
 export const metadata: Metadata = { title: "Perfil" };
 
 export default async function ProfilePage() {
   const user = await requireUser();
-  const [accounts, stats] = await Promise.all([
+  const [accounts, stats, tournaments] = await Promise.all([
     prisma.account.findMany({ where: { userId: user.id }, select: { providerId: true } }),
     prisma.attempt.aggregate({ where: { userId: user.id, status: { in: ["FINISHED", "TIMED_OUT"] } }, _count: true, _sum: { correctCount: true } }),
+    getTournamentStats(user.id),
   ]);
   const created = await prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: { createdAt: true } });
   const hasPassword = accounts.some((a) => a.providerId === "credential");
@@ -27,6 +30,7 @@ export default async function ProfilePage() {
         title="Perfil y ajustes"
         description={`@${user.username ?? "—"} · jugando desde ${formatDate(created.createdAt, user.timezone)} · ${stats._count} cuestionarios · ${stats._sum.correctCount ?? 0} aciertos`}
       />
+      <TournamentStatsCard stats={tournaments} tz={user.timezone} />
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Datos</CardTitle>

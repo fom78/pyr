@@ -268,6 +268,12 @@ export async function deleteDraftQuiz(id: string, actor: { id: string }) {
       prisma.quizSchedule.update({ where: { id: quiz.scheduleId }, data: { skippedSlots: { push: quiz.slotAt } } }),
       prisma.quiz.delete({ where: { id } }),
     ]);
+  } else if (quiz.tournamentId && quiz.slotAt && !quiz.createdById) {
+    // Igual con un borrador automático de torneo.
+    await prisma.$transaction([
+      prisma.tournament.update({ where: { id: quiz.tournamentId }, data: { skippedSlots: { push: quiz.slotAt } } }),
+      prisma.quiz.delete({ where: { id } }),
+    ]);
   } else await prisma.quiz.delete({ where: { id } });
   await logAudit({ actorId: actor.id, action: "quiz.delete", entityType: "Quiz", entityId: id, before: quiz });
 }

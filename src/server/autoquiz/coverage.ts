@@ -6,6 +6,8 @@ export type CoverageSlot = {
   at: Date;
   /** Preguntas ya puestas en el borrador de ese turno (ya no figuran como nunca usadas). */
   reserved: number;
+  /** Preguntas que pide este turno a la categoría (default `perQuiz`; un torneo con varias categorías pide su parte). */
+  need?: number;
 };
 
 export type Coverage = {
@@ -57,7 +59,7 @@ export function projectCoverage(input: {
     level: "OK",
   };
   for (const slot of slots) {
-    const need = Math.max(0, input.perQuiz - slot.reserved);
+    const need = Math.max(0, (slot.need ?? input.perQuiz) - slot.reserved);
     const fromFresh = Math.min(need, fresh);
     fresh -= fromFresh;
     const freshMissing = need - fromFresh;

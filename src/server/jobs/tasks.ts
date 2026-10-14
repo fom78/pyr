@@ -6,6 +6,8 @@ import { releaseExpiredLeaves } from "@/server/league/service";
 import { recomputeAllStandings, recomputeForQuiz } from "@/server/ranking/service";
 import { purgeRateBuckets } from "@/server/ratelimit";
 import { finishDueTournaments } from "@/server/tournaments/service";
+import { fillTournamentDrafts, generateTournamentDrafts, notifyTournamentBank } from "@/server/tournaments/auto";
+import { createNextEditions, notifySeriesRegistration } from "@/server/tournaments/series";
 import { notifyReviewReady } from "@/server/quiz/review-notify";
 import { notifyQuizOpened, notifyStreakRisk, sendWeeklySummaries } from "@/server/notifications/player";
 import { ensureCoverVariants } from "@/server/storage/images";
@@ -49,12 +51,24 @@ async function runAutoQuizzes(now = new Date()) {
   // Primero se completan los que quedaron cortos (los más próximos tienen prioridad sobre los turnos nuevos),
   // así un borrador recién completado ya puede publicarse solo en esta misma pasada.
   const filled = await fillIncompleteDrafts(now);
+  const tFilled = await fillTournamentDrafts(now);
   const due = await handleDueDrafts(now);
   const generated = await generateDrafts(now);
+  // Torneos con cuestionarios automáticos: un borrador por turno con el banco de sus categorías.
+  const tGenerated = await generateTournamentDrafts(now);
   // Turnos urgentes sin cuestionario: se arman y publican solos si la categoría lo permite (antes de avisar).
   const rescued = await rescueSlots(now);
   const notified = await notifyDrafts(now);
-  return { ...due, ...filled, ...generated, ...rescued, notified: notified.sent };
+  const tBank = await notifyTournamentBank(now);
+  return {
+    ...due,
+    ...filled,
+    ...generated,
+    ...rescued,
+    tournamentFilled: tFilled.filled,
+    tournamentCreated: tGenerated.created,
+    notified: notified.sent + tBank.sent,
+  };
 }
 
 async function runCoverVariants() {
@@ -79,6 +93,11 @@ export const tasks = {
   "attempts-expire": { cron: "* * * * *", run: () => expireStaleAttempts() },
   "memberships-release": { cron: "*/10 * * * *", run: () => releaseExpiredLeaves() },
   "tournaments-finish": { cron: "*/5 * * * *", run: () => finishDueTournaments() },
+  // Torneos recurrentes: al empezar una edición se crea la siguiente; al abrir su inscripción se avisa.
+  "tournaments-series": {
+    cron: "5 * * * *",
+    run: async () => ({ ...(await createNextEditions()), ...(await notifySeriesRegistration()) }),
+  },
   // Recálculo completo diario: la ventana del ranking se desliza aunque no haya eventos.
   "standings-nightly": { cron: "15 3 * * *", run: () => recomputeAllStandings() },
   "ratelimit-purge": { cron: "0 * * * *", run: () => purgeRateBuckets() },

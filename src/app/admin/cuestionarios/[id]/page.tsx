@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { draftContext } from "@/server/autoquiz/service";
 import { notFound } from "next/navigation";
 import { requirePermission, userCan } from "@/server/auth/session";
 import { prisma } from "@/server/db";
@@ -16,7 +17,6 @@ import { QuizActions } from "./quiz-actions";
 import { QuestionPicker } from "./question-picker";
 import { QuizQuestionList } from "./quiz-question-list";
 import { AutoDraftPanel } from "./auto-draft-panel";
-import { getCategorySettings } from "@/server/config/service";
 
 export const metadata = { title: "Cuestionario" };
 
@@ -56,8 +56,9 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
   const tz = user.timezone;
   const scoring = readScoring(quiz.scoring, { base: 100, timeBonus: 50, wrongPenalty: 0 });
   const attempts = [...quiz.attempts].sort((a, b) => compareResults(a, b));
-  const autoDraft = status === "DRAFT" && quiz.scheduleId && quiz.category;
-  const expected = autoDraft ? (await getCategorySettings(quiz.category!))["quiz.questionCount"] : 0;
+  // Borrador automático (calendario de liga o torneo con cuestionarios automáticos): reemplazar, regenerar, completar.
+  const autoDraft = status === "DRAFT" && (quiz.scheduleId || (quiz.tournamentId && quiz.slotAt && !quiz.createdById));
+  const expected = autoDraft ? ((await draftContext(quiz))?.perQuiz ?? 0) : 0;
 
   return (
     <>

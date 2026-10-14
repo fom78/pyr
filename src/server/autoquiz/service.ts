@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { prisma, type Db } from "@/server/db";
 import { Prisma, type Category, type QuizSchedule } from "@/generated/prisma/client";
-import { getCategorySettings } from "@/server/config/service";
+import { getCategorySettings, getSettings } from "@/server/config/service";
 import type { Settings } from "@/server/config/registry";
 import { UserError, NotFoundError } from "@/server/errors";
 import { logAudit } from "@/server/audit";
@@ -14,8 +14,10 @@ import { getQuizStatus } from "@/server/quiz/status";
 import { DEFAULT_TZ, formatDate, formatDateTime, fromDateTimeInput } from "@/lib/format";
 import { gridSlots, upcomingSlots } from "./slots";
 import { mixTotal, pickQuestions, remainingMix, type DifficultyMix, type FreshCandidate, type ReusableCandidate } from "./pick";
-import { projectCoverage, type Coverage } from "./coverage";
+import { projectCoverage, type Coverage, type CoverageSlot } from "./coverage";
+import { tournamentTimeline } from "@/server/tournaments/timeline";
 import { renderTitle } from "./title";
+import { mergePools, pickAcrossCategories } from "@/server/tournaments/pick";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
@@ -48,6 +50,68 @@ export type ScheduleInput = z.infer<typeof scheduleInput>;
 
 async function settingsFor(category: Category, db: Db) {
   return getCategorySettings(category, db);
+}
+
+/**
+ * Borradores automáticos: los de un calendario de liga y los que arma un torneo (con turno y sin
+ * autor). Los de un torneo cancelado o terminado no cuentan (no se publican ni completan).
+ */
+export const AUTO_DRAFT_WHERE: Prisma.QuizWhereInput = {
+  OR: [
+    { scheduleId: { not: null } },
+    { tournamentId: { not: null }, slotAt: { not: null }, createdById: null, tournament: { status: "PUBLISHED" } },
+  ],
+};
+
+/** De quién es un borrador y con qué reglas se arma: categoría de liga (con su calendario) o torneo. */
+export type DraftContext = {
+  name: string;
+  icon: string | null;
+  ownerId: string;
+  s: Settings;
+  /** Preguntas que tiene que tener. */
+  perQuiz: number;
+  /** Categorías de las que salen las preguntas. */
+  categoryIds: string[];
+  mix: DifficultyMix | null;
+};
+
+export async function draftContext(
+  quiz: { categoryId: string | null; tournamentId: string | null; scheduleId: string | null },
+  db: Db = prisma,
+): Promise<DraftContext | null> {
+  if (quiz.tournamentId) {
+    const t = await db.tournament.findUnique({ where: { id: quiz.tournamentId }, include: { categories: { select: { categoryId: true } } } });
+    if (!t) return null;
+    return {
+      name: t.name,
+      icon: "🏆",
+      ownerId: t.id,
+      s: await getSettings(db),
+      perQuiz: t.questionsPerQuiz,
+      categoryIds: t.categories.map((c) => c.categoryId),
+      mix: null,
+    };
+  }
+  if (!quiz.categoryId) return null;
+  const category = await db.category.findUnique({ where: { id: quiz.categoryId } });
+  if (!category) return null;
+  const s = await settingsFor(category, db);
+  const schedule = quiz.scheduleId ? await db.quizSchedule.findUnique({ where: { id: quiz.scheduleId } }) : null;
+  return {
+    name: category.name,
+    icon: category.icon,
+    ownerId: category.id,
+    s,
+    perQuiz: s["quiz.questionCount"],
+    categoryIds: [category.id],
+    mix: (schedule?.difficultyMix as DifficultyMix | null) ?? null,
+  };
+}
+
+/** Candidatas de cada categoría del contexto. */
+export async function contextPools(ctx: DraftContext, now: Date, db: Db) {
+  return Promise.all(ctx.categoryIds.map((id) => loadCandidates(id, ctx.s, now, db)));
 }
 
 /**
@@ -316,14 +380,15 @@ export async function generateDrafts(now = new Date(), db: Db = prisma) {
  */
 export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
   const drafts = await db.quiz.findMany({
-    where: { scheduleId: { not: null }, publishedAt: null },
-    include: { category: true, _count: { select: { questions: true } } },
+    where: { ...AUTO_DRAFT_WHERE, publishedAt: null },
+    include: { _count: { select: { questions: true } } },
   });
   let published = 0;
   let skipped = 0;
   for (const quiz of drafts) {
-    if (!quiz.category) continue;
-    const s = await settingsFor(quiz.category, db);
+    const ctx = await draftContext(quiz, db);
+    if (!ctx) continue;
+    const s = ctx.s;
     if (quiz.opensAt <= now) {
       // Un borrador automático se descarta; uno cargado a mano se suelta del turno y queda como borrador.
       if (quiz.createdById) await db.quiz.update({ where: { id: quiz.id }, data: { scheduleId: null, slotAt: null } });
@@ -334,7 +399,7 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
         {
           level: "WARNING",
           kind: "draft.skipped",
-          title: `${quiz.category.name}: se salteó un cuestionario`,
+          title: `${ctx.name}: se salteó un cuestionario`,
           body: `El borrador “${quiz.title}” llegó a su apertura (${formatDateTime(quiz.opensAt)}) sin aprobar${
             quiz.createdById ? "; quedó como borrador suelto." : " y se descartó."
           }`,
@@ -346,7 +411,7 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
       );
       continue;
     }
-    const complete = quiz._count.questions === s["quiz.questionCount"];
+    const complete = quiz._count.questions === ctx.perQuiz;
     if (s["autoquiz.autoPublish"] && complete && now >= autoPublishAt(quiz.opensAt, s)) {
       try {
         await publishQuiz(quiz.id, SYSTEM_ACTOR, now);
@@ -355,7 +420,7 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
           {
             level: "INFO",
             kind: "draft.autoPublished",
-            title: `${quiz.category.name}: se publicó solo un cuestionario`,
+            title: `${ctx.name}: se publicó solo un cuestionario`,
             body: `Nadie aprobó “${quiz.title}” y se publicó automáticamente; abre ${formatDateTime(quiz.opensAt)}. Hasta que abra lo podés despublicar.`,
             href: `/admin/cuestionarios/${quiz.id}`,
             dedupeKey: `draft.autoPublished:${quiz.id}`,
@@ -449,6 +514,7 @@ export async function bankCoverage(schedule: ScheduleWithCategory, now = new Dat
     };
   });
   const { fresh, reusable } = await loadCandidates(schedule.categoryId, s, now, db);
+  const tournamentSlots = await tournamentDemand(schedule.categoryId, now, until, db);
   const freshByDifficulty: Record<number, number> = {};
   for (const q of fresh) freshByDifficulty[q.difficulty] = (freshByDifficulty[q.difficulty] ?? 0) + 1;
   const pending = upcoming.filter((u) => u.status === "draft" || u.status === "pending");
@@ -467,7 +533,7 @@ export async function bankCoverage(schedule: ScheduleWithCategory, now = new Dat
     warnDays,
     criticalDays: s["autoquiz.coverageCriticalDays"],
     coverage: projectCoverage({
-      slots: pending.map((u) => ({ at: u.at, reserved: Math.min(u.questions, perQuiz) })),
+      slots: [...pending.map((u) => ({ at: u.at, reserved: Math.min(u.questions, perQuiz) })), ...tournamentSlots],
       perQuiz,
       fresh: fresh.length,
       reusable: reusable.length,
@@ -476,6 +542,26 @@ export async function bankCoverage(schedule: ScheduleWithCategory, now = new Dat
       criticalDays: s["autoquiz.coverageCriticalDays"],
     }),
   };
+}
+
+/**
+ * Lo que van a pedirle a una categoría los torneos con cuestionarios automáticos: un turno por cada
+ * fecha todavía sin cuestionario, con su parte de las preguntas (se reparten entre sus categorías).
+ */
+async function tournamentDemand(categoryId: string, now: Date, until: Date, db: Db): Promise<CoverageSlot[]> {
+  const tournaments = await db.tournament.findMany({
+    where: { status: "PUBLISHED", autoQuizzes: true, endsAt: { gt: now }, categories: { some: { categoryId } } },
+    include: { _count: { select: { categories: true } }, quizzes: { select: { slotAt: true, opensAt: true } } },
+  });
+  const out: CoverageSlot[] = [];
+  for (const t of tournaments) {
+    const taken = new Set(t.quizzes.map((q) => (q.slotAt ?? q.opensAt).getTime()));
+    const skipped = new Set(t.skippedSlots.map((d) => d.getTime()));
+    const need = Math.ceil(t.questionsPerQuiz / Math.max(1, t._count.categories));
+    for (const at of tournamentTimeline(t, now).slots)
+      if (at > now && at <= until && !taken.has(at.getTime()) && !skipped.has(at.getTime())) out.push({ at, reserved: 0, need });
+  }
+  return out;
 }
 
 export async function listBankCoverage(now = new Date(), db: Db = prisma) {
@@ -531,26 +617,27 @@ export async function notifyCoverage(now = new Date(), db: Db = prisma) {
 /** Avisos sobre borradores: sin aprobar cerca de la apertura, incompletos o con reutilizadas. */
 export async function notifyDrafts(now = new Date(), db: Db = prisma) {
   const drafts = await db.quiz.findMany({
-    where: { scheduleId: { not: null }, publishedAt: null, opensAt: { gt: now } },
-    include: { category: true, questions: { select: { reused: true } } },
+    where: { ...AUTO_DRAFT_WHERE, publishedAt: null, opensAt: { gt: now } },
+    include: { questions: { select: { reused: true } } },
     orderBy: { opensAt: "asc" },
   });
   let sent = 0;
   for (const quiz of drafts) {
-    if (!quiz.category) continue;
-    const s = await settingsFor(quiz.category, db);
+    const ctx = await draftContext(quiz, db);
+    if (!ctx) continue;
+    const s = ctx.s;
     const when = formatDateTime(quiz.opensAt);
     const href = `/admin/cuestionarios/${quiz.id}`;
     const urgent = quiz.opensAt.getTime() - now.getTime() <= s["autoquiz.alertHours"] * HOUR;
-    const missing = s["quiz.questionCount"] - quiz.questions.length;
+    const missing = ctx.perQuiz - quiz.questions.length;
     const reused = quiz.questions.filter((q) => q.reused).length;
     if (missing > 0)
       sent += await notifyStaff(
         {
           level: urgent ? "CRITICAL" : "WARNING",
           kind: "draft.incomplete",
-          title: `${quiz.category.name}: borrador incompleto`,
-          body: `“${quiz.title}” (abre ${when}) tiene ${quiz.questions.length} de ${s["quiz.questionCount"]} preguntas: no hay suficientes aprobadas.`,
+          title: `${ctx.name}: borrador incompleto`,
+          body: `“${quiz.title}” (abre ${when}) tiene ${quiz.questions.length} de ${ctx.perQuiz} preguntas: no hay suficientes aprobadas.`,
           href,
           dedupeKey: `draft.incomplete:${quiz.id}:${urgent ? "urgent" : "early"}`,
         },
@@ -562,7 +649,7 @@ export async function notifyDrafts(now = new Date(), db: Db = prisma) {
         {
           level: "WARNING",
           kind: "draft.pending",
-          title: `${quiz.category.name}: cuestionario por aprobar`,
+          title: `${ctx.name}: cuestionario por aprobar`,
           body: `“${quiz.title}” abre ${when} y todavía no está aprobado.${
             s["autoquiz.autoPublish"]
               ? ` Si nadie lo revisa se publica solo el ${formatDateTime(autoPublishAt(quiz.opensAt, s))}.`
@@ -579,7 +666,7 @@ export async function notifyDrafts(now = new Date(), db: Db = prisma) {
         {
           level: "INFO",
           kind: "draft.reused",
-          title: `${quiz.category.name}: borrador con preguntas reutilizadas`,
+          title: `${ctx.name}: borrador con preguntas reutilizadas`,
           body: `“${quiz.title}” (abre ${when}) usa ${reused} pregunta(s) ya jugadas porque no alcanzaron las nuevas.`,
           href,
           dedupeKey: `draft.reused:${quiz.id}`,
@@ -663,14 +750,14 @@ async function loadDraft(quizId: string, now: Date, db: Db) {
   const quiz = await db.quiz.findUnique({
     where: { id: quizId },
     include: {
-      category: true,
       questions: { include: { question: { select: { difficulty: true } } }, orderBy: { position: "asc" } },
     },
   });
   if (!quiz) throw new NotFoundError("Cuestionario");
   if (getQuizStatus(quiz, now) !== "DRAFT") throw new UserError("Solo se pueden cambiar las preguntas de un borrador.");
-  if (!quiz.category || quiz.tournamentId) throw new UserError("Solo para cuestionarios de liga.");
-  return { ...quiz, category: quiz.category };
+  const ctx = await draftContext(quiz, db);
+  if (!ctx || !ctx.categoryIds.length) throw new UserError("El cuestionario no tiene categorías de las que tomar preguntas.");
+  return { ...quiz, ctx };
 }
 
 /** Cambia una pregunta del borrador por otra candidata, de la misma dificultad si hay. */
@@ -684,14 +771,13 @@ export async function replaceQuestion(
   const quiz = await loadDraft(quizId, now, db);
   const target = quiz.questions.find((q) => q.id === quizQuestionId);
   if (!target) throw new NotFoundError("Pregunta del cuestionario");
-  const s = await settingsFor(quiz.category, db);
-  const pools = await loadCandidates(quiz.categoryId!, s, now, db);
+  const pools = mergePools(await contextPools(quiz.ctx, now, db));
   const inQuiz = new Set(quiz.questions.map((q) => q.questionId));
   const { picks } = pickQuestions(
     { fresh: removePicked(pools.fresh, inQuiz), reusable: removePicked(pools.reusable, inQuiz) },
     1,
     { [target.question.difficulty]: 1 },
-    { allowReuse: s["autoquiz.allowReuse"] },
+    { allowReuse: quiz.ctx.s["autoquiz.allowReuse"] },
   );
   if (!picks.length) throw new UserError("No hay otra pregunta aprobada disponible en esta categoría.");
   await db.quizQuestion.update({ where: { id: target.id }, data: { questionId: picks[0].id, reused: picks[0].reused } });
@@ -712,18 +798,12 @@ export async function replaceQuestion(
 export async function regenerateDraft(quizId: string, actor: { id: string }, now = new Date()) {
   return prisma.$transaction(async (tx) => {
     const quiz = await loadDraft(quizId, now, tx);
-    const s = await settingsFor(quiz.category, tx);
+    const { ctx } = quiz;
     await tx.quizQuestion.deleteMany({ where: { quizId } });
-    const schedule = quiz.scheduleId ? await tx.quizSchedule.findUnique({ where: { id: quiz.scheduleId } }) : null;
-    const pools = await loadCandidates(quiz.categoryId!, s, now, tx);
-    const { picks, missing } = pickQuestions(
-      pools,
-      s["quiz.questionCount"],
-      (schedule?.difficultyMix as DifficultyMix | null) ?? null,
-      {
-        allowReuse: s["autoquiz.allowReuse"],
-      },
-    );
+    const pools = await contextPools(ctx, now, tx);
+    const opts = { allowReuse: ctx.s["autoquiz.allowReuse"] };
+    const { picks, missing } =
+      pools.length > 1 ? pickAcrossCategories(pools, ctx.perQuiz, opts) : pickQuestions(pools[0], ctx.perQuiz, ctx.mix, opts);
     await tx.quizQuestion.createMany({
       data: picks.map((p, position) => ({ quizId, questionId: p.id, position, reused: p.reused })),
     });
@@ -738,8 +818,15 @@ type Pools = Awaited<ReturnType<typeof loadCandidates>>;
 type DraftToFill = { id: string; questions: { questionId: string; position: number; question: { difficulty: number } }[] };
 
 /** Agrega a un borrador las preguntas que le faltan, sin tocar las que ya tiene. Devuelve las agregadas y los pools restantes. */
-async function topUpDraft(quiz: DraftToFill, pools: Pools, s: Settings, mix: DifficultyMix | null, db: Db) {
-  const need = s["quiz.questionCount"] - quiz.questions.length;
+export async function topUpDraft(
+  quiz: DraftToFill,
+  pools: Pools,
+  perQuiz: number,
+  allowReuse: boolean,
+  mix: DifficultyMix | null,
+  db: Db,
+) {
+  const need = perQuiz - quiz.questions.length;
   if (need <= 0) return { added: 0, missing: 0, pools };
   const inQuiz = new Set(quiz.questions.map((q) => q.questionId));
   const available = { fresh: removePicked(pools.fresh, inQuiz), reusable: removePicked(pools.reusable, inQuiz) };
@@ -750,7 +837,7 @@ async function topUpDraft(quiz: DraftToFill, pools: Pools, s: Settings, mix: Dif
       mix,
       quiz.questions.map((q) => q.question.difficulty),
     ),
-    { allowReuse: s["autoquiz.allowReuse"] },
+    { allowReuse },
   );
   if (picks.length) {
     const start = Math.max(-1, ...quiz.questions.map((q) => q.position)) + 1;
@@ -762,7 +849,7 @@ async function topUpDraft(quiz: DraftToFill, pools: Pools, s: Settings, mix: Dif
   return { added: picks.length, missing, pools: { fresh: removePicked(pools.fresh, ids), reusable: removePicked(pools.reusable, ids) } };
 }
 
-const draftQuestionsInclude = {
+export const draftQuestionsInclude = {
   questions: { select: { questionId: true, position: true, question: { select: { difficulty: true } } } },
 } as const;
 
@@ -789,7 +876,7 @@ export async function fillIncompleteDrafts(now = new Date(), db: Db = prisma) {
     let pools = await loadCandidates(schedule.categoryId, s, now, db);
     for (const quiz of drafts) {
       if (!pools.fresh.length && !pools.reusable.length) break;
-      const r = await topUpDraft(quiz, pools, s, schedule.difficultyMix as DifficultyMix | null, db);
+      const r = await topUpDraft(quiz, pools, s["quiz.questionCount"], s["autoquiz.allowReuse"], schedule.difficultyMix as DifficultyMix | null, db);
       pools = r.pools;
       if (r.added) {
         filled++;
@@ -807,43 +894,41 @@ export async function fillIncompleteDrafts(now = new Date(), db: Db = prisma) {
 /** Completa ya un borrador incompleto (botón "Completar"). */
 export async function fillDraft(quizId: string, actor: { id: string }, now = new Date()) {
   return prisma.$transaction(async (tx) => {
-    await loadDraft(quizId, now, tx);
-    const quiz = await tx.quiz.findUniqueOrThrow({ where: { id: quizId }, include: { ...draftQuestionsInclude, category: true } });
-    const s = await settingsFor(quiz.category!, tx);
-    if (quiz.questions.length >= s["quiz.questionCount"]) throw new UserError("El borrador ya tiene todas sus preguntas.");
-    const schedule = quiz.scheduleId ? await tx.quizSchedule.findUnique({ where: { id: quiz.scheduleId } }) : null;
-    const pools = await loadCandidates(quiz.categoryId!, s, now, tx);
-    const r = await topUpDraft(quiz, pools, s, (schedule?.difficultyMix as DifficultyMix | null) ?? null, tx);
+    const { ctx } = await loadDraft(quizId, now, tx);
+    const quiz = await tx.quiz.findUniqueOrThrow({ where: { id: quizId }, include: draftQuestionsInclude });
+    if (quiz.questions.length >= ctx.perQuiz) throw new UserError("El borrador ya tiene todas sus preguntas.");
+    const pools = mergePools(await contextPools(ctx, now, tx));
+    const r = await topUpDraft(quiz, pools, ctx.perQuiz, ctx.s["autoquiz.allowReuse"], ctx.mix, tx);
     if (!r.added) throw new UserError("No hay preguntas aprobadas disponibles para completarlo. Cargá o aprobá más en la categoría.");
     await logAudit({ actorId: actor.id, action: "quiz.fill", entityType: "Quiz", entityId: quizId, meta: { added: r.added, missing: r.missing } }, tx);
     return { added: r.added, missing: r.missing };
   });
 }
 
-/** Borradores automáticos pendientes de aprobación, por fecha de apertura. */
+/** Borradores automáticos pendientes de aprobación (liga y torneos), por fecha de apertura. */
 export async function listPendingDrafts(now = new Date(), db: Db = prisma) {
   const drafts = await db.quiz.findMany({
-    where: { scheduleId: { not: null }, publishedAt: null, opensAt: { gt: now } },
-    include: {
-      category: true,
-      questions: { select: { reused: true } },
-    },
+    where: { ...AUTO_DRAFT_WHERE, publishedAt: null, opensAt: { gt: now } },
+    include: { questions: { select: { reused: true } } },
     orderBy: { opensAt: "asc" },
   });
-  return Promise.all(
-    drafts.map(async (q) => {
-      const s = await settingsFor(q.category!, db);
-      return {
-        id: q.id,
-        title: q.title,
-        opensAt: q.opensAt,
-        category: { id: q.category!.id, name: q.category!.name, icon: q.category!.icon },
-        questions: q.questions.length,
-        expected: s["quiz.questionCount"],
-        reused: q.questions.filter((x) => x.reused).length,
-        urgent: q.opensAt.getTime() - now.getTime() <= s["autoquiz.alertHours"] * HOUR,
-        autoPublishAt: s["autoquiz.autoPublish"] ? autoPublishAt(q.opensAt, s) : null,
-      };
-    }),
-  );
+  const out = [];
+  for (const q of drafts) {
+    const ctx = await draftContext(q, db);
+    if (!ctx) continue;
+    const s = ctx.s;
+    out.push({
+      id: q.id,
+      title: q.title,
+      opensAt: q.opensAt,
+      category: { id: ctx.ownerId, name: ctx.name, icon: ctx.icon },
+      tournament: Boolean(q.tournamentId),
+      questions: q.questions.length,
+      expected: ctx.perQuiz,
+      reused: q.questions.filter((x) => x.reused).length,
+      urgent: q.opensAt.getTime() - now.getTime() <= s["autoquiz.alertHours"] * HOUR,
+      autoPublishAt: s["autoquiz.autoPublish"] ? autoPublishAt(q.opensAt, s) : null,
+    });
+  }
+  return out;
 }

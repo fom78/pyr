@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { QuizCard } from "@/components/game/quiz-card";
 import { StandingsTable } from "@/components/game/standings-table";
-import { formatDateTime, formatNumber } from "@/lib/format";
+import { formatDateTime, formatHours, formatNumber } from "@/lib/format";
 import { EnrollButton } from "./enroll-button";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -47,10 +47,11 @@ export default async function TournamentPage({
   if (!t || t.status === "DRAFT") notFound();
   const now = new Date();
   const tz = user.timezone;
-  const [entry, balance, attempts] = await Promise.all([
+  const [entry, balance, attempts, result] = await Promise.all([
     prisma.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
     getBalance(user.id),
     prisma.attempt.findMany({ where: { userId: user.id, quizId: { in: t.quizzes.map((q) => q.id) } } }),
+    prisma.tournamentResult.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
   ]);
   const wildcardsLeft = entry ? await remainingWildcards(t.id, user.id) : [];
   const reg = registrationState(t, now);
@@ -74,7 +75,8 @@ export default async function TournamentPage({
       </li>
       <li>Costo: {t.entryCost === 0 ? "gratis" : `${t.entryCost} créditos`}. No usa vidas.</li>
       <li>
-        {t.quizCount} cuestionarios, aproximadamente uno cada {t.frequencyDays} días. Suman <strong>todos</strong>.
+        {t.quizCount} cuestionarios, {t.frequencyHours === 24 ? "uno por día" : `uno cada ${formatHours(t.frequencyHours)}`}; cada uno queda abierto{" "}
+        {formatHours(t.quizActiveHours)}. Suman <strong>todos</strong>.
       </li>
       <li>
         Puntaje: {scoring.base} por acierto + hasta {scoring.timeBonus} por velocidad
@@ -114,7 +116,18 @@ export default async function TournamentPage({
         <img src={img} alt="" className="mb-6 aspect-[3/1] w-full rounded-lg object-cover" />
       )}
       {t.description && <p className="mb-6 text-pretty text-muted-foreground">{t.description}</p>}
-      {t.status === "FINISHED" && <p className="mb-6 rounded-md bg-muted p-3 text-sm">Este torneo finalizó. ¡Gracias por participar!</p>}
+      {t.status === "FINISHED" &&
+        (result ? (
+          <p className="bg-muted mb-6 rounded-md p-3 text-sm">
+            <strong>
+              {result.rank <= 3 ? `${["🥇", "🥈", "🥉"][result.rank - 1]} ` : ""}Terminaste #{result.rank} de {result.participants}
+            </strong>{" "}
+            con {formatNumber(result.points)} puntos ({result.quizzesPlayed} de {result.quizzesTotal} cuestionarios)
+            {result.prizeCredits > 0 && <> · ganaste {formatNumber(result.prizeCredits)} créditos</>}.
+          </p>
+        ) : (
+          <p className="bg-muted mb-6 rounded-md p-3 text-sm">Este torneo finalizó. ¡Gracias por participar!</p>
+        ))}
       {entry && me && (
         <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
           <Card>

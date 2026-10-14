@@ -3,17 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { authorize } from "@/server/auth/guard";
-import { cancelTournament, generateTournamentQuizzes, publishTournament, saveTournament } from "@/server/tournaments/service";
+import { cancelTournament, generateTournamentQuizzes, publishTournament, saveTournament, stopRepeating } from "@/server/tournaments/service";
 import { formValues, toFormState, type FormState } from "@/server/actions";
-import { fromDateTimeInput } from "@/lib/format";
+import { DEFAULT_TZ, fromDateTimeInput } from "@/lib/format";
 
 export async function saveTournamentAction(id: string | null, _prev: FormState, fd: FormData): Promise<FormState> {
   const values = formValues(fd);
   let target = id;
   try {
     const user = await authorize("tournament.manage");
-    const tz = user.timezone;
-    const date = (k: string) => fromDateTimeInput(String(fd.get(k) ?? ""), tz);
+    // El formulario carga y muestra el calendario en hora de Buenos Aires (como el de la liga).
+    const date = (k: string) => fromDateTimeInput(String(fd.get(k) ?? ""), DEFAULT_TZ);
     const prizes = String(fd.get("prizes") ?? "")
       .split(",")
       .map((s) => s.trim())
@@ -28,11 +28,14 @@ export async function saveTournamentAction(id: string | null, _prev: FormState, 
         imageKey: fd.get("imageKey") || undefined,
         categoryIds: fd.getAll("categoryIds").map(String),
         startsAt: date("startsAt"),
-        endsAt: date("endsAt"),
-        registrationOpensAt: date("registrationOpensAt"),
-        registrationEndsAt: date("registrationEndsAt"),
         quizCount: fd.get("quizCount"),
-        frequencyDays: fd.get("frequencyDays"),
+        frequencyHours: fd.get("frequencyHours"),
+        quizActiveHours: fd.get("quizActiveHours"),
+        registrationLeadDays: fd.get("registrationLeadDays"),
+        lateEntryDays: fd.get("lateEntryDays"),
+        questionsPerQuiz: fd.get("questionsPerQuiz"),
+        autoQuizzes: fd.get("autoQuizzes") === "on",
+        repeatEveryDays: fd.get("repeatEveryDays") ? Number(fd.get("repeatEveryDays")) : null,
         entryCost: fd.get("entryCost"),
         maxParticipants: fd.get("maxParticipants") ? Number(fd.get("maxParticipants")) : null,
         wildcardsPerQuiz: fd.get("wildcardsPerQuiz"),
@@ -73,6 +76,12 @@ export async function publishTournamentAction(id: string) {
 export async function generateQuizzesAction(id: string) {
   const user = await authorize("tournament.manage");
   return run(() => generateTournamentQuizzes(id, user), id, "Cuestionarios creados como borrador.");
+}
+
+/** Corta la serie: esta edición ya no crea la siguiente. */
+export async function stopRepeatingAction(id: string) {
+  const user = await authorize("tournament.manage");
+  return run(() => stopRepeating(id, user), id, "Listo: no se crean más ediciones.");
 }
 
 export async function cancelTournamentAction(id: string, reason: string) {

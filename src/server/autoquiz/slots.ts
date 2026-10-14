@@ -22,6 +22,13 @@ export function localWeekday(at: Date, tz: string) {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
+/** Suma (o resta) días de calendario manteniendo la hora local en la zona dada. */
+export function addLocalDays(at: Date, days: number, tz: string) {
+  const local = toDateTimeInput(at, tz);
+  const [y, m, d] = local.slice(0, 10).split("-").map(Number);
+  return fromDateTimeInput(`${new Date(Date.UTC(y, m - 1, d) + days * DAY).toISOString().slice(0, 10)}T${local.slice(11, 16)}`, tz);
+}
+
 /**
  * Grilla de turnos en (from, until]: turno N = anchorAt + N × frequencyHours (N ≥ 0).
  * Con frecuencias múltiplo de 24 se avanza por días locales, así el turno queda siempre a la

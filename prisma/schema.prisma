@@ -49,6 +49,7 @@ model User {
   streaks            StreakState[]
   tournamentEntries  TournamentEntry[]
   tournamentStanding TournamentStanding[]
+  tournamentResults  TournamentResult[]
   creditTransactions CreditTransaction[]  @relation("CreditOwner")
   creditsIssued      CreditTransaction[]  @relation("CreditIssuer")
   quizzesCreated     Quiz[]
@@ -348,6 +349,7 @@ model Quiz {
   attempts  Attempt[]
 
   @@unique([scheduleId, slotAt])
+  @@unique([tournamentId, slotAt])
   @@index([categoryId, opensAt])
   @@index([tournamentId, opensAt])
   @@index([status, closesAt])
@@ -517,35 +519,51 @@ enum WildcardType {
 }
 
 model Tournament {
-  id                  String           @id @default(cuid())
-  slug                String           @unique
-  name                String
-  description         String?
-  imageKey            String?
-  status              TournamentStatus @default(DRAFT)
-  startsAt            DateTime
-  endsAt              DateTime
-  registrationOpensAt DateTime
-  registrationEndsAt  DateTime
-  quizCount           Int              @default(5)
-  frequencyDays       Int              @default(3)
-  entryCost           Int              @default(0)
-  maxParticipants     Int?
-  wildcardsPerQuiz    Int              @default(1)
-  scoring             Json             @default("{}") // overrides de puntaje
-  prizes              Json             @default("[]") // [{ rank, credits }]
-  finishedAt          DateTime?
-  cancelledAt         DateTime?
-  createdById         String?
-  createdBy           User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+  id                   String           @id @default(cuid())
+  slug                 String           @unique
+  name                 String
+  description          String?
+  imageKey             String?
+  status               TournamentStatus @default(DRAFT)
+  startsAt             DateTime
+  endsAt               DateTime
+  registrationOpensAt  DateTime
+  registrationEndsAt   DateTime
+  quizCount            Int              @default(7)
+  // Tiempos relativos: las fechas absolutas de arriba se derivan al guardar (tournaments/timeline.ts).
+  frequencyHours       Int              @default(24) // un cuestionario cada N horas desde startsAt
+  quizActiveHours      Int              @default(24) // cuánto queda abierto cada uno
+  registrationLeadDays Int              @default(3) // la inscripción abre N días antes del inicio (0 = al publicar)
+  lateEntryDays        Int              @default(0) // la inscripción sigue N días después de empezar
+  questionsPerQuiz     Int              @default(10)
+  autoQuizzes          Boolean          @default(true) // cuestionarios armados solos con el banco de sus categorías
+  // Serie (torneo recurrente): al empezar una edición se crea la siguiente.
+  repeatEveryDays      Int?
+  seriesId             String? // id de la primera edición
+  seriesName           String? // nombre base, sin "#n"
+  edition              Int              @default(1)
+  nextCreatedAt        DateTime?
+  skippedSlots         DateTime[] // turnos cuyo borrador automático se borró a mano (no se regeneran)
+  entryCost            Int              @default(0)
+  maxParticipants      Int?
+  wildcardsPerQuiz     Int              @default(1)
+  scoring              Json             @default("{}") // overrides de puntaje
+  prizes               Json             @default("[]") // [{ rank, credits }]
+  finishedAt           DateTime?
+  cancelledAt          DateTime?
+  createdById          String?
+  createdBy            User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
 
   categories TournamentCategory[]
   wildcards  TournamentWildcard[]
   entries    TournamentEntry[]
   quizzes    Quiz[]
   standings  TournamentStanding[]
+  results    TournamentResult[]
+
+  @@index([seriesId])
 }
 
 model TournamentCategory {
@@ -608,6 +626,27 @@ model TournamentStanding {
 
   @@id([tournamentId, userId])
   @@index([tournamentId, rank])
+}
+
+/// Resultado final de un jugador en un torneo terminado. Es una foto (no se recalcula): alimenta
+/// las estadísticas del perfil aunque después cambien el torneo, las inscripciones o los baneos.
+model TournamentResult {
+  tournamentId   String
+  tournament     Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank           Int
+  participants   Int
+  points         Int
+  quizzesPlayed  Int
+  quizzesTotal   Int
+  correctCount   Int
+  prizeCredits   Int        @default(0)
+  tournamentName String
+  finishedAt     DateTime
+
+  @@id([tournamentId, userId])
+  @@index([userId, finishedAt])
 }
 
 // ───────────────────────────── Créditos (ledger) ─────────────────────────────

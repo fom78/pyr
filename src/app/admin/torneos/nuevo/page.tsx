@@ -2,27 +2,31 @@ import { requirePermission } from "@/server/auth/session";
 import { prisma } from "@/server/db";
 import { getSettings } from "@/server/config/service";
 import { PageHeader } from "@/components/common";
-import { toDateTimeInput } from "@/lib/format";
-import { suggestTournamentDates } from "@/server/tournaments/service";
+import { DEFAULT_TZ, toDateTimeInput } from "@/lib/format";
+import { suggestTournamentDefaults } from "@/server/tournaments/service";
 import { TournamentForm } from "../tournament-form";
 
 export const metadata = { title: "Nuevo torneo" };
 
 export default async function NewTournamentPage() {
-  const user = await requirePermission("tournament.manage");
+  await requirePermission("tournament.manage");
   const [categories, s] = await Promise.all([
     prisma.category.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true, icon: true } }),
     getSettings(),
   ]);
-  const tz = user.timezone;
-  const d = suggestTournamentDates();
+  const now = new Date();
+  const d = suggestTournamentDefaults(now);
   return (
     <>
-      <PageHeader title="Nuevo torneo" description="Se crea como borrador. Después generás sus cuestionarios y lo publicás." back={{ href: "/admin/torneos", label: "Torneos" }} />
+      <PageHeader
+        title="Nuevo torneo"
+        description="Se crea como borrador. Al publicarlo, sus cuestionarios se arman solos con el banco de sus categorías."
+        back={{ href: "/admin/torneos", label: "Torneos" }}
+      />
       <TournamentForm
         id={null}
-        timezone={tz}
         categories={categories}
+        now={now.toISOString()}
         initial={{
           name: "",
           slug: "",
@@ -30,12 +34,10 @@ export default async function NewTournamentPage() {
           imageKey: null,
           imageUrl: null,
           categoryIds: [],
-          startsAt: toDateTimeInput(d.startsAt, tz),
-          endsAt: toDateTimeInput(d.endsAt, tz),
-          registrationOpensAt: toDateTimeInput(d.registrationOpensAt, tz),
-          registrationEndsAt: toDateTimeInput(d.registrationEndsAt, tz),
-          quizCount: 5,
-          frequencyDays: 4,
+          ...d,
+          startsAt: toDateTimeInput(d.startsAt, DEFAULT_TZ),
+          autoQuizzes: true,
+          repeatEveryDays: null,
           entryCost: 30,
           maxParticipants: null,
           wildcardsPerQuiz: s["tournament.wildcardsPerQuiz"],

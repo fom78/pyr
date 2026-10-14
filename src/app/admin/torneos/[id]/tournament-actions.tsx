@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Ban, Eye, ListPlus } from "lucide-react";
+import { Ban, Eye, ListPlus, Repeat2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -16,7 +16,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useActionToast } from "@/components/use-action-toast";
-import { cancelTournamentAction, generateQuizzesAction, publishTournamentAction } from "../actions";
+import { cancelTournamentAction, generateQuizzesAction, publishTournamentAction, stopRepeatingAction } from "../actions";
 
 export function TournamentActions({
   id,
@@ -24,12 +24,14 @@ export function TournamentActions({
   missingQuizzes,
   entries,
   cost,
+  repeats,
 }: {
   id: string;
   status: string;
   missingQuizzes: number;
   entries: number;
   cost: number;
+  repeats: boolean;
 }) {
   const { pending, run } = useActionToast();
   const [reason, setReason] = useState("");
@@ -39,6 +41,11 @@ export function TournamentActions({
       {live && missingQuizzes > 0 && (
         <Button variant="outline" disabled={pending} onClick={() => run(() => generateQuizzesAction(id), "Cuestionarios generados.")}>
           <ListPlus /> Generar {missingQuizzes} cuestionario{missingQuizzes === 1 ? "" : "s"}
+        </Button>
+      )}
+      {live && repeats && (
+        <Button variant="outline" disabled={pending} onClick={() => run(() => stopRepeatingAction(id), "No se crean más ediciones.")}>
+          <Repeat2 /> Dejar de repetir
         </Button>
       )}
       {status === "DRAFT" && (

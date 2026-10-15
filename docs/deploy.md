@@ -190,7 +190,49 @@ Recomendado además: copiar `/opt/pyr/prod/backups` fuera de la VPS (rclone a un
 
 > Antes el backup lo hacía un contenedor aparte (`backup`, `--profile backup`). Ya no existe: el deploy lo elimina solo (`--remove-orphans`). En una VPS ya instalada, agregar `APP_ENV=prod` / `APP_ENV=dev` al `.env` de cada entorno y ajustar el dueño de la carpeta de backups como se indica arriba.
 
-## 7. Operación
+## 7. Ingreso con Google
+
+El ingreso con usuario y contraseña funciona siempre. El de Google se activa solo cuando el entorno tiene `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET`; si faltan, el botón no aparece.
+
+**Una sola vez, en https://console.cloud.google.com:**
+
+1. Crear el proyecto (por ejemplo "PyR").
+2. **APIs y servicios → Pantalla de consentimiento de OAuth:**
+   - tipo **Externo**;
+   - nombre "PyR" y mail de soporte;
+   - dominio autorizado `pyrtrivia.com.ar`;
+   - página principal `https://pyrtrivia.com.ar` y política de privacidad `https://pyrtrivia.com.ar/privacidad`;
+   - permisos solo `openid`, `email` y `profile` (los básicos, sin verificación de Google);
+   - **publicar la app ("En producción")**: en modo "Prueba" solo entran los mails cargados como testers.
+3. **Credenciales → Crear ID de cliente de OAuth → Aplicación web.** Un mismo cliente sirve para todos los entornos.
+   - **Orígenes de JavaScript autorizados:** `https://pyrtrivia.com.ar`, `https://dev.pyrtrivia.com.ar`, `http://localhost:3200`.
+   - **URIs de redireccionamiento autorizados:**
+     - `https://pyrtrivia.com.ar/api/auth/callback/google`
+     - `https://dev.pyrtrivia.com.ar/api/auth/callback/google`
+     - `http://localhost:3200/api/auth/callback/google`
+
+     Agregá también la versión con `www.` si se usa.
+
+En la VPS lo hace `bash scripts/vps-google.sh [dev|prod] [--reiniciar]`: pide las claves y las carga en los `.env`. A mano:
+
+**En cada entorno** (`.env` local, `/opt/pyr/dev/.env`, `/opt/pyr/prod/.env`):
+
+```bash
+GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=xxxx
+```
+
+Después reiniciá la app (`docker compose -p pyr-<env> -f compose.prod.yml up -d`; en local, `npm run dev`). La URL de retorno se arma con `BETTER_AUTH_URL` (o `APP_URL`), que tiene que ser exactamente el dominio público.
+
+**Cómo funciona:**
+- **Primera vez con Google:** crea la cuenta con un usuario automático armado a partir del mail (lo puede cambiar en la bienvenida o el perfil) y lleva a la bienvenida.
+- **Mismo mail:** si ya existía una cuenta con ese mail, se vincula sola.
+- **Cuentas creadas sin mail:** conviene vincular Google desde el perfil, para no terminar con una cuenta duplicada.
+- **Desde el perfil se puede:**
+  - crear una contraseña, si se entró solo con Google;
+  - desvincular Google, solo si la cuenta tiene contraseña.
+
+## 8. Operación
 
 ```bash
 docker compose -p pyr-prod -f compose.prod.yml ps

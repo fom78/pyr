@@ -12,6 +12,9 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
         <Logo className="text-3xl" />
       </Link>
       <div className="w-full max-w-sm">{children}</div>
+      <Link href="/privacidad" className="mt-6 text-xs text-muted-foreground hover:underline">
+        Privacidad
+      </Link>
     </main>
   );
 }

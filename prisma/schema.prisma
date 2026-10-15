@@ -21,19 +21,20 @@ enum Role {
 }
 
 model User {
-  id              String    @id @default(cuid())
-  name            String // nombre visible
-  email           String    @unique
-  emailVerified   Boolean   @default(false)
-  image           String?
-  username        String?   @unique
-  displayUsername String?
-  role            Role      @default(USER)
-  timezone        String    @default("America/Argentina/Buenos_Aires")
-  onboardedAt     DateTime?
-  preferences     Json      @default("{}")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                String    @id @default(cuid())
+  name              String // nombre visible
+  email             String    @unique
+  emailVerified     Boolean   @default(false)
+  image             String?
+  username          String?   @unique
+  displayUsername   String?
+  role              Role      @default(USER)
+  timezone          String    @default("America/Argentina/Buenos_Aires")
+  onboardedAt       DateTime?
+  usernameChangedAt DateTime? // último cambio de usuario (se limita a uno cada 30 días)
+  preferences       Json      @default("{}")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   sessions           Session[]
   accounts           Account[]

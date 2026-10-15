@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDate } from "@/lib/format";
 import { getTournamentStats } from "@/server/player/tournament-stats";
 import { TournamentStatsCard } from "@/components/game/tournament-stats-card";
-import { PasswordForm, ProfileForm, LinkGoogle, ThemeSwitcher } from "./forms";
+import { PasswordForm, ProfileForm, LinkGoogle, SetPasswordForm, ThemeSwitcher, UnlinkGoogle, UsernameForm } from "./forms";
 
 export const metadata: Metadata = { title: "Perfil" };
 
@@ -35,7 +35,8 @@ export default async function ProfilePage() {
         <CardHeader>
           <CardTitle className="text-base">Datos</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="grid gap-6">
+          {user.username && <UsernameForm username={user.username} />}
           <ProfileForm name={user.name} timezone={user.timezone} image={user.image} imageUrl={fileUrl(user.image)} />
         </CardContent>
       </Card>
@@ -61,10 +62,19 @@ export default async function ProfilePage() {
         <CardHeader>
           <CardTitle className="text-base">Formas de ingresar</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-2 text-sm">
+        <CardContent className="grid gap-3 text-sm">
           <p>Usuario y contraseña: {hasPassword ? "✓ configurado" : "no configurado"}</p>
+          {!hasPassword && user.username && <SetPasswordForm username={user.username} />}
           <p>Google: {hasGoogle ? "✓ vinculada" : "no vinculada"}</p>
-          {googleEnabled() && !hasGoogle && <LinkGoogle />}
+          {googleEnabled() && !hasGoogle && (
+            <>
+              <p className="text-muted-foreground text-xs">
+                Vinculala desde acá (y no entrando con Google desde la pantalla de ingreso): así se suma a esta cuenta en vez de crear otra.
+              </p>
+              <LinkGoogle />
+            </>
+          )}
+          {hasGoogle && hasPassword && <UnlinkGoogle />}
         </CardContent>
       </Card>
       <div className="flex flex-wrap gap-2">

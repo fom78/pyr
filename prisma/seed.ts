@@ -4,6 +4,7 @@
  *    y los textos de reglas por defecto.
  *  - Si SEED_DEMO != "false" y la base no tiene categorías: datos de prueba (usuarios de cada rol, categorías,
  *    preguntas, cuestionarios en todos los estados, intentos, tablas, un torneo y un baneo).
+ *  - Siempre: asigna nombre de usuario a las cuentas de Google que no tengan.
  * Uso: npm run db:seed
  */
 import "dotenv/config";
@@ -18,6 +19,7 @@ import { getStrategy } from "../src/server/wildcards/strategies";
 import { normalizeText } from "../src/lib/text";
 import { defaultRulesTexts } from "../src/server/rules/defaults";
 import type { Role, WildcardType } from "../src/generated/prisma/enums";
+import { backfillUsernames } from "../src/server/auth/username";
 import { seedCategories } from "./seed-data";
 
 const DAY = 86_400_000;
@@ -353,6 +355,9 @@ async function main() {
 
   const hasData = (await prisma.category.count()) > 0;
   if (process.env.SEED_DEMO !== "false" && !hasData) await seedDemo(admin.id);
+  // Altas viejas con Google que quedaron sin nombre de usuario (idempotente).
+  const filled = await backfillUsernames(prisma);
+  if (filled) console.log(`✓ Usuario asignado a ${filled} cuenta(s) de Google`);
   else if (hasData) console.log("→ La base ya tiene datos: se omiten los datos de prueba.");
 }
 

@@ -9,6 +9,7 @@ import { googleEnabled } from "@/server/env";
 import { getActiveBan } from "@/server/users/bans";
 import { grantSignupBonus } from "@/server/credits/rewards";
 import { logger } from "@/server/logger";
+import { availableUsername, usernameBase } from "./username";
 
 export const USERNAME_RE = /^[a-zA-Z0-9_.]{3,24}$/;
 
@@ -62,6 +63,14 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
+        // Alta con Google: llega sin nombre de usuario. Se le arma uno libre a partir del mail o el
+        // nombre (después lo puede cambiar en la bienvenida o el perfil).
+        before: async (user) => {
+          const u = user as typeof user & { username?: string | null };
+          if (u.username) return;
+          const username = await availableUsername(usernameBase(user.email, user.name));
+          return { data: { ...user, username, displayUsername: username } };
+        },
         after: async (user) => {
           try {
             await grantSignupBonus(user.id);
@@ -77,7 +86,9 @@ export const auth = betterAuth({
         before: async (session) => {
           const ban = await getActiveBan(session.userId);
           if (ban) {
+            // Con `code`, el callback de Google vuelve a /ingresar?error=account_suspended en vez de responder JSON.
             throw new APIError("FORBIDDEN", {
+              code: "account_suspended",
               message: ban.endsAt
                 ? `Tu cuenta está suspendida hasta el ${ban.endsAt.toLocaleDateString("es-AR")}. Motivo: ${ban.reason}`
                 : `Tu cuenta está suspendida. Motivo: ${ban.reason}`,

@@ -5,12 +5,12 @@ import { Field, FormError } from "@/components/forms/field";
 import { SubmitButton } from "@/components/forms/submit-button";
 import { signInAction } from "../actions";
 
-export function SignInForm({ next }: { next?: string }) {
+export function SignInForm({ next, autoFocus = true }: { next?: string; autoFocus?: boolean }) {
   const [state, action] = useActionState(signInAction, null);
   return (
     <form action={action} className="grid gap-4">
       <FormError message={state?.error} />
-      <Field label="Usuario" name="username" autoComplete="username" required defaultValue={state?.values?.username} autoFocus />
+      <Field label="Usuario" name="username" autoComplete="username" required defaultValue={state?.values?.username} autoFocus={autoFocus} />
       <Field label="Contraseña" name="password" type="password" autoComplete="current-password" required />
       {next && <input type="hidden" name="next" value={next} />}
       <SubmitButton size="lg" pendingText="Ingresando…">

@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
-import { changePasswordAction, updateProfileAction } from "./actions";
+import { changePasswordAction, changeUsernameAction, setPasswordAction, unlinkGoogleAction, updateProfileAction } from "./actions";
+import { useActionToast } from "@/components/use-action-toast";
 
 const TZ_LABEL: Record<string, string> = {
   "America/Argentina/Buenos_Aires": "Argentina",
@@ -48,6 +49,63 @@ export function ProfileForm({ name, timezone, image, imageUrl }: { name: string;
       </div>
       <SubmitButton className="w-fit">Guardar</SubmitButton>
     </form>
+  );
+}
+
+/** Nombre de usuario (con el que aparecés en las tablas y entrás con contraseña). */
+export function UsernameForm({ username, hint, submitLabel = "Cambiar usuario" }: { username: string; hint?: string; submitLabel?: string }) {
+  const [state, action] = useActionState(changeUsernameAction, null);
+  return (
+    <form action={action} className="grid gap-3">
+      <FormError message={state?.error} />
+      {state?.message && <p className="text-success text-sm">{state.message}</p>}
+      <div className="flex flex-wrap items-end gap-2">
+        <Field
+          label="Nombre de usuario"
+          name="username"
+          defaultValue={state?.values?.username ?? username}
+          required
+          minLength={3}
+          maxLength={24}
+          pattern="[a-zA-Z0-9_.]{3,24}"
+          autoComplete="username"
+          className="min-w-48 flex-1"
+          hint={hint ?? "Letras, números, guion bajo o punto. Se puede cambiar una vez cada 30 días."}
+        />
+        <SubmitButton variant="outline" className="mb-6 w-fit">
+          {submitLabel}
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
+/** Cuenta creada con Google: crear una contraseña para entrar también con usuario y contraseña. */
+export function SetPasswordForm({ username }: { username: string }) {
+  const [state, action] = useActionState(setPasswordAction, null);
+  const fe = state?.fieldErrors;
+  if (state?.ok) return <p className="text-success text-sm">{state.message}</p>;
+  return (
+    <form action={action} className="grid gap-4">
+      <p className="text-muted-foreground text-sm">
+        Entraste con Google. Si creás una contraseña, también podés ingresar con <strong>@{username}</strong> y esa contraseña.
+      </p>
+      <FormError message={state?.error} />
+      <Field label="Contraseña" name="newPassword" type="password" autoComplete="new-password" required minLength={8} errors={fe?.newPassword} />
+      <Field label="Repetir contraseña" name="confirm" type="password" autoComplete="new-password" required errors={fe?.confirm} />
+      <SubmitButton variant="outline" className="w-fit">
+        Crear contraseña
+      </SubmitButton>
+    </form>
+  );
+}
+
+export function UnlinkGoogle() {
+  const { pending, run } = useActionToast();
+  return (
+    <Button type="button" variant="outline" className="w-fit" disabled={pending} onClick={() => run(() => unlinkGoogleAction(), "Google desvinculado.")}>
+      Desvincular Google
+    </Button>
   );
 }
 

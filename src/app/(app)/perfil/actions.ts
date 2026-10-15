@@ -8,6 +8,7 @@ import { getCurrentUser } from "@/server/auth/session";
 import { prisma } from "@/server/db";
 import { UserError } from "@/server/errors";
 import { formValues, toFormState, type FormState } from "@/server/actions";
+import { changeUsername } from "@/server/auth/username";
 
 const TIMEZONES = ["America/Argentina/Buenos_Aires", "America/Montevideo", "America/Santiago", "America/Sao_Paulo", "America/Mexico_City", "America/Bogota", "America/Lima", "Europe/Madrid", "UTC"] as const;
 
@@ -58,3 +59,48 @@ export async function changePasswordAction(_prev: FormState, fd: FormData): Prom
   }
 }
 
+
+/** Cambia el nombre de usuario (el primero es libre; después, uno cada 30 días). */
+export async function changeUsernameAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  const values = formValues(fd);
+  try {
+    const user = await me();
+    const r = await changeUsername(user.id, fd.get("username"));
+    revalidatePath("/", "layout");
+    return { ok: true, message: r.changed ? `Listo: ahora sos @${r.username}.` : "Guardado." };
+  } catch (err) {
+    return toFormState(err, values);
+  }
+}
+
+const newPasswordSchema = z
+  .object({ newPassword: z.string().min(8, "Mínimo 8 caracteres.").max(128), confirm: z.string() })
+  .refine((d) => d.newPassword === d.confirm, { path: ["confirm"], message: "Las contraseñas no coinciden." });
+
+/** Cuenta creada con Google: le agrega una contraseña para entrar también con usuario y contraseña. */
+export async function setPasswordAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  try {
+    const user = await me();
+    const data = newPasswordSchema.parse(Object.fromEntries(fd));
+    await auth.api.setPassword({ body: { newPassword: data.newPassword }, headers: await headers() });
+    revalidatePath("/perfil");
+    return { ok: true, message: `Listo: ya podés entrar con @${user.username} y tu contraseña.` };
+  } catch (err) {
+    return toFormState(err);
+  }
+}
+
+/** Desvincula Google: solo si tiene contraseña, para no quedarse sin forma de entrar. */
+export async function unlinkGoogleAction(): Promise<FormState> {
+  try {
+    const user = await me();
+    const hasPassword = await prisma.account.count({ where: { userId: user.id, providerId: "credential" } });
+    if (!hasPassword) throw new UserError("Primero creá una contraseña: si no, te quedarías sin forma de entrar.");
+    // Directo y no con auth.api.unlinkAccount: ese exige una sesión iniciada hace menos de un día.
+    await prisma.account.deleteMany({ where: { userId: user.id, providerId: "google" } });
+    revalidatePath("/perfil");
+    return { ok: true, message: "Google desvinculado." };
+  } catch (err) {
+    return toFormState(err);
+  }
+}

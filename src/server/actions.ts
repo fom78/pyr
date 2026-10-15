@@ -31,6 +31,26 @@ const AUTH_MESSAGES: Record<string, string> = {
   CREDENTIAL_ACCOUNT_NOT_FOUND: "Tu cuenta no tiene contraseña (ingresaste con Google).",
 };
 
+/**
+ * Errores que devuelve el ingreso con Google (`/ingresar?error=<código>`). Si el código no está acá se
+ * muestra uno genérico; `error_description` solo se usa para la suspensión (trae el motivo y la fecha).
+ */
+const OAUTH_MESSAGES: Record<string, string> = {
+  access_denied: "Cancelaste el ingreso con Google.",
+  account_suspended: "Tu cuenta está suspendida.",
+  account_not_linked: "Ese Google no está vinculado a tu cuenta. Entrá con tu usuario y vinculalo desde tu perfil.",
+  unable_to_link_account: "No pudimos vincular esa cuenta de Google. Entrá con tu usuario y vinculala desde tu perfil.",
+  account_already_linked_to_different_user: "Esa cuenta de Google ya está vinculada a otro usuario.",
+  email_not_found: "Tu cuenta de Google no compartió un mail. Probá con otra o con usuario y contraseña.",
+  state_not_found: "El ingreso con Google se venció. Probá de nuevo.",
+};
+
+export function oauthErrorMessage(code: string | undefined, description?: string) {
+  if (!code) return null;
+  if (code === "account_suspended" && description) return description;
+  return OAUTH_MESSAGES[code] ?? "No pudimos completar el ingreso con Google. Probá de nuevo o entrá con usuario y contraseña.";
+}
+
 /** Convierte cualquier error en un FormState amable. Re-lanza redirects de Next. */
 export function toFormState(err: unknown, values?: Record<string, string>): FormState {
   unstable_rethrow(err); // deja pasar redirect()/notFound()/forbidden() de Next

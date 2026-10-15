@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { completeOnboardingAction } from "../actions";
 
-type Step = { emoji: string; title: string; body: string };
+type Step = { emoji: string; title: string; body: string; extra?: React.ReactNode };
 
 export function Onboarding({ steps }: { name: string; steps: Step[] }) {
   const [i, setI] = useState(0);
@@ -23,6 +23,7 @@ export function Onboarding({ steps }: { name: string; steps: Step[] }) {
             <h1 className="text-2xl font-bold text-balance">{step.title}</h1>
             <p className="text-pretty text-muted-foreground">{step.body}</p>
           </div>
+          {step.extra && <div className="text-left">{step.extra}</div>}
           <div className="flex justify-center gap-1.5" aria-label={`Paso ${i + 1} de ${steps.length}`}>
             {steps.map((_, j) => (
               <span key={j} className={cn("h-1.5 w-6 rounded-full", j === i ? "bg-primary" : "bg-muted")} />

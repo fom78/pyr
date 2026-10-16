@@ -30,9 +30,24 @@ export const settingsRegistry = {
   "lives.max": def({
     schema: int(1, 20),
     default: 3,
-    label: "Vidas por usuario",
-    help: "Cantidad máxima de categorías en las que un usuario puede participar a la vez.",
+    label: "Vidas iniciales",
+    help: "Vidas que tiene todo jugador: cada una permite participar en una categoría a la vez. Se suman las extra que consiga (regalo del equipo o canje de estrellas).",
     group: "Liga",
+  }),
+  "lives.cap": def({
+    schema: int(1, 20),
+    default: 5,
+    label: "Tope de vidas",
+    help: "Máximo de vidas que puede llegar a tener un jugador sumando las extra. Si es menor que las iniciales, manda el de vidas iniciales.",
+    group: "Liga",
+  }),
+  "lives.starsPerLife": def({
+    schema: int(1, 1000),
+    default: 10,
+    label: "Estrellas por vida",
+    help: "Estrellas que cuesta desbloquear una vida extra (mientras no haya llegado al tope).",
+    group: "Liga",
+    unit: "estrellas",
   }),
   "league.leaveCooldownDays": def({
     schema: int(0, 90),

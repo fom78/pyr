@@ -21,6 +21,23 @@ export function livesUsed(memberships: MembershipLike[], now = new Date()) {
   return memberships.filter((m) => effectiveStatus(m, now) !== "LEFT").length;
 }
 
+/**
+ * Vidas desbloqueadas: las iniciales más las extra, sin pasar el tope. El tope nunca baja de las
+ * iniciales y un saldo de extra negativo (no debería pasar) no resta.
+ */
+export function lifeCapacity({ base, extra, cap }: { base: number; extra: number; cap: number }) {
+  return Math.min(base + Math.max(extra, 0), Math.max(cap, base));
+}
+
+/**
+ * Para mostrar: usadas, libres y bloqueadas (las que faltan hasta el tope). Si usa más de las
+ * desbloqueadas (le quitaron una en uso) no hay libres.
+ */
+export function livesView(used: number, capacity: number, cap: number) {
+  const top = Math.max(cap, capacity);
+  return { used, free: Math.max(0, capacity - used), locked: top - capacity, capacity, cap: top };
+}
+
 export type JoinCheck =
   | { ok: true; livesLeftAfter: number }
   | { ok: false; reason: "ALREADY_MEMBER" | "LEAVING" | "NO_LIVES" | "REJOIN_BLOCKED"; message: string; until?: Date };
@@ -55,7 +72,11 @@ export function checkJoin(
     };
   const used = livesUsed(memberships, now);
   if (used >= maxLives)
-    return { ok: false, reason: "NO_LIVES", message: `Ya usaste tus ${maxLives} vidas. Abandoná una categoría para liberar una.` };
+    return {
+      ok: false,
+      reason: "NO_LIVES",
+      message: `Ya usaste tus ${maxLives} vidas. Abandoná una categoría para liberar una o desbloqueá otra con estrellas.`,
+    };
   return { ok: true, livesLeftAfter: maxLives - used - 1 };
 }
 

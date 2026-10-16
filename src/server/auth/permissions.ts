@@ -21,6 +21,7 @@ export type Action =
   | "user.ban"
   | "user.setRole"
   | "credits.adjust"
+  | "inventory.adjust" // dar o quitar vidas extra y estrellas (solo admin)
   | "settings.manage"
   | "rules.edit"
   | "audit.view"

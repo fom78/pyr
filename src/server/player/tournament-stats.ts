@@ -12,6 +12,7 @@ export async function getTournamentStats(userId: string, db: Db = prisma) {
       participants: true,
       points: true,
       prizeCredits: true,
+      prizeStars: true,
       quizzesPlayed: true,
       quizzesTotal: true,
       tournamentName: true,

@@ -1,5 +1,5 @@
 /** Resumen de torneos jugados para el perfil (puro). */
-export type TournamentResultRow = { rank: number; participants: number; prizeCredits: number; points: number };
+export type TournamentResultRow = { rank: number; participants: number; prizeCredits: number; prizeStars?: number; points: number };
 
 export type TournamentSummary = {
   played: number;
@@ -8,6 +8,7 @@ export type TournamentSummary = {
   /** Veces que terminó en el 10 % de arriba de la tabla. */
   topTen: number;
   prizeCredits: number;
+  prizeStars: number;
   /** Percentil promedio (100 = siempre primero). null sin torneos. */
   avgPercentile: number | null;
 };
@@ -22,12 +23,14 @@ export function summarizeResults(rows: TournamentResultRow[]): TournamentSummary
   const podiums = { first: 0, second: 0, third: 0 };
   let topTen = 0;
   let prizeCredits = 0;
+  let prizeStars = 0;
   for (const r of rows) {
     if (r.rank === 1) podiums.first++;
     else if (r.rank === 2) podiums.second++;
     else if (r.rank === 3) podiums.third++;
     if (r.rank <= Math.max(1, Math.ceil(r.participants * 0.1))) topTen++;
     prizeCredits += r.prizeCredits;
+    prizeStars += r.prizeStars ?? 0;
   }
   return {
     played: rows.length,
@@ -35,6 +38,7 @@ export function summarizeResults(rows: TournamentResultRow[]): TournamentSummary
     bestRank: rows.length ? Math.min(...rows.map((r) => r.rank)) : null,
     topTen,
     prizeCredits,
+    prizeStars,
     avgPercentile: rows.length ? Math.round(rows.reduce((a, r) => a + percentile(r.rank, r.participants), 0) / rows.length) : null,
   };
 }

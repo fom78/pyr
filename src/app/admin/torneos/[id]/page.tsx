@@ -14,6 +14,7 @@ import { DEFAULT_TZ, formatDateTime, toDateTimeInput } from "@/lib/format";
 import { TournamentForm } from "../tournament-form";
 import { TournamentActions } from "./tournament-actions";
 import { TOURNAMENT_STATUS } from "../labels";
+import { prizeList } from "@/server/tournaments/prizes";
 
 export const metadata = { title: "Torneo" };
 
@@ -101,7 +102,8 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
               maxParticipants: t.maxParticipants,
               wildcardsPerQuiz: t.wildcardsPerQuiz,
               wildcards: Object.fromEntries(t.wildcards.map((w) => [w.type, w.quantity])),
-              prizes: ((t.prizes as { rank: number; credits: number }[]) ?? []).map((p) => p.credits).join(", "),
+              prizes: prizeList(t.prizes, "credits"),
+              prizeStars: prizeList(t.prizes, "stars"),
               ...scoring,
             }}
           />

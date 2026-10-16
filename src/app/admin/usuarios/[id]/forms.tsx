@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useActionToast } from "@/components/use-action-toast";
 import type { FormState } from "@/server/actions";
-import { adjustCreditsAction, banAction, revokeBanAction, setRoleAction } from "../actions";
+import { adjustCreditsAction, adjustStarsAction, banAction, extraLifeAction, revokeBanAction, setRoleAction } from "../actions";
 
 function Result({ state }: { state: FormState }) {
   if (!state) return null;
@@ -75,6 +75,45 @@ export function AdjustCreditsForm({ userId }: { userId: string }) {
       <div className="grid gap-1.5">
         <Label htmlFor="adj-reason">Motivo (obligatorio, lo ve el usuario)</Label>
         <Textarea id="adj-reason" name="reason" required minLength={5} maxLength={300} />
+      </div>
+      <SubmitButton variant="outline" className="w-fit">
+        Aplicar ajuste
+      </SubmitButton>
+      <Result state={state} />
+    </form>
+  );
+}
+
+/** Dar o quitar una vida extra (motivo obligatorio; al dar, el jugador recibe un aviso con el motivo). */
+export function ExtraLifeForm({ userId, canGive, canTake }: { userId: string; canGive: boolean; canTake: boolean }) {
+  const [state, action, pending] = useActionState(extraLifeAction.bind(null, userId), null);
+  return (
+    <form action={action} className="grid gap-3">
+      <div className="grid gap-1.5">
+        <Label htmlFor="life-reason">Motivo (obligatorio, lo ve el usuario)</Label>
+        <Textarea id="life-reason" name="reason" required minLength={5} maxLength={300} placeholder="Gracias por ayudar con la revisión de preguntas." />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" name="delta" value="1" disabled={pending || !canGive}>
+          Dar una vida
+        </Button>
+        <Button type="submit" name="delta" value="-1" variant="outline" disabled={pending || !canTake}>
+          Quitar una vida extra
+        </Button>
+      </div>
+      <Result state={state} />
+    </form>
+  );
+}
+
+export function AdjustStarsForm({ userId }: { userId: string }) {
+  const [state, action] = useActionState(adjustStarsAction.bind(null, userId), null);
+  return (
+    <form action={action} className="grid gap-3">
+      <Field label="Estrellas (negativo para descontar)" name="amount" type="number" step={1} required />
+      <div className="grid gap-1.5">
+        <Label htmlFor="stars-reason">Motivo (obligatorio, lo ve el usuario)</Label>
+        <Textarea id="stars-reason" name="reason" required minLength={5} maxLength={300} />
       </div>
       <SubmitButton variant="outline" className="w-fit">
         Aplicar ajuste

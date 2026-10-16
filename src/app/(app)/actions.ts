@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { authorize } from "@/server/auth/guard";
 import { joinCategory, leaveCategory } from "@/server/league/service";
+import { exchangeStarsForLife } from "@/server/inventory/service";
 import { startAttempt } from "@/server/game/engine";
 import { prisma } from "@/server/db";
 import { toFormState, type FormState } from "@/server/actions";
@@ -26,6 +27,17 @@ export async function leaveCategoryAction(categoryId: string): Promise<FormState
     await leaveCategory(user.id, categoryId);
     revalidatePath("/", "layout");
     return { ok: true, message: "Saliste de la categoría." };
+  } catch (err) {
+    return toFormState(err);
+  }
+}
+
+export async function exchangeStarsAction(): Promise<FormState> {
+  try {
+    const user = await authorize("play");
+    const r = await exchangeStarsForLife(user.id);
+    revalidatePath("/", "layout");
+    return { ok: true, message: `¡Desbloqueaste una vida! Ahora tenés ${r.capacity}.` };
   } catch (err) {
     return toFormState(err);
   }

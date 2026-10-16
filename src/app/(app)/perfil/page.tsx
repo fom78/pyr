@@ -78,6 +78,11 @@ export default async function ProfilePage() {
         </CardContent>
       </Card>
       <div className="flex flex-wrap gap-2">
+        {user.username && (
+          <Button asChild variant="outline">
+            <Link href={`/jugadores/${encodeURIComponent(user.username)}`}>Ver cómo te ven los demás</Link>
+          </Button>
+        )}
         <Button asChild variant="outline">
           <Link href="/historial">Mis intentos</Link>
         </Button>

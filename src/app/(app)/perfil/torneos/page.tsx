@@ -3,7 +3,7 @@ import { requireUser } from "@/server/auth/session";
 import { listTournamentResults } from "@/server/player/tournament-stats";
 import { percentile } from "@/server/player/tournament-summary";
 import { EmptyState, PageHeader, Pager, parsePage } from "@/components/common";
-import { rankLabel } from "@/components/game/tournament-stats-card";
+import { PrizeBadge, rankLabel } from "@/components/game/tournament-stats-card";
 import { formatDate, formatNumber } from "@/lib/format";
 
 export const metadata = { title: "Mis torneos" };
@@ -41,7 +41,7 @@ export default async function MyTournamentsPage({ searchParams }: { searchParams
                     {r.quizzesPlayed}/{r.quizzesTotal} jugados · {r.correctCount} aciertos
                   </span>
                 </span>
-                {r.prizeCredits > 0 && <span className="text-success text-xs font-medium">+{formatNumber(r.prizeCredits)} créditos</span>}
+                <PrizeBadge credits={r.prizeCredits} stars={r.prizeStars} />
               </Link>
             </li>
           ))}

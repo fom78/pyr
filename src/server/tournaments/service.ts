@@ -6,6 +6,8 @@ import { UserError, NotFoundError } from "@/server/errors";
 import { logAudit } from "@/server/audit";
 import { getActiveBan } from "@/server/users/bans";
 import { postTransaction } from "@/server/credits/service";
+import { postInventory } from "@/server/inventory/service";
+import { parsePrizes, prizeText } from "./prizes";
 import { recomputeTournamentStandings } from "@/server/ranking/service";
 import { finalizeAttempt } from "@/server/game/engine";
 import { getSettings } from "@/server/config/service";
@@ -44,7 +46,17 @@ export const tournamentInput = z
     maxParticipants: z.coerce.number().int().min(2).max(1_000_000).nullable(),
     wildcardsPerQuiz: z.coerce.number().int().min(0).max(3),
     wildcards: z.array(z.object({ type: z.enum(WILDCARD_TYPES), quantity: z.coerce.number().int().min(0).max(50) })),
-    prizes: z.array(z.object({ rank: z.coerce.number().int().min(1), credits: z.coerce.number().int().min(1).max(1_000_000) })).max(20),
+    prizes: z
+      .array(
+        z
+          .object({
+            rank: z.coerce.number().int().min(1),
+            credits: z.coerce.number({ error: "Premio inválido." }).int("Los premios son números enteros.").min(0, "Premio inválido.").max(1_000_000),
+            stars: z.coerce.number({ error: "Premio inválido." }).int("Los premios son números enteros.").min(0, "Premio inválido.").max(10_000).default(0),
+          })
+          .refine((p) => p.credits > 0 || p.stars > 0, "Cada puesto premiado tiene que dar créditos o estrellas."),
+      )
+      .max(20),
     scoring: z.object({
       base: z.coerce.number().int().min(0).max(10000),
       timeBonus: z.coerce.number().int().min(0).max(10000),
@@ -261,20 +273,31 @@ export async function finishTournament(id: string, now = new Date()) {
   const open = await prisma.attempt.findMany({ where: { quiz: { tournamentId: id }, status: "IN_PROGRESS" }, select: { id: true } });
   for (const a of open) await finalizeAttempt(a.id, now);
   await recomputeTournamentStandings(id, now);
-  const prizes = (t.prizes as { rank: number; credits: number }[]) ?? [];
+  const prizes = parsePrizes(t.prizes);
   const standings = await prisma.tournamentStanding.findMany({ where: { tournamentId: id } });
-  const prizeOf = new Map<string, number>();
+  const prizeOf = new Map<string, { credits: number; stars: number }>();
   for (const p of prizes) {
     for (const st of standings.filter((s) => s.rank === p.rank)) {
-      await postTransaction({
-        userId: st.userId,
-        amount: p.credits,
-        type: "TOURNAMENT_PRIZE",
-        reason: `Premio: puesto ${p.rank} en ${t.name}`,
-        idempotencyKey: `prize:${id}:${st.userId}`,
-        meta: { tournamentId: id, rank: p.rank },
-      });
-      prizeOf.set(st.userId, p.credits);
+      if (p.credits > 0)
+        await postTransaction({
+          userId: st.userId,
+          amount: p.credits,
+          type: "TOURNAMENT_PRIZE",
+          reason: `Premio: puesto ${p.rank} en ${t.name}`,
+          idempotencyKey: `prize:${id}:${st.userId}`,
+          meta: { tournamentId: id, rank: p.rank },
+        });
+      if (p.stars > 0)
+        await postInventory({
+          userId: st.userId,
+          asset: "STAR",
+          amount: p.stars,
+          type: "TOURNAMENT_PRIZE",
+          reason: `Premio: puesto ${p.rank} en ${t.name}`,
+          idempotencyKey: `prize-stars:${id}:${st.userId}`,
+          meta: { tournamentId: id, rank: p.rank },
+        });
+      prizeOf.set(st.userId, { credits: p.credits, stars: p.stars });
     }
   }
   const quizzesTotal = await prisma.quiz.count({ where: { tournamentId: id, publishedAt: { not: null } } });
@@ -290,7 +313,8 @@ export async function finishTournament(id: string, now = new Date()) {
         quizzesPlayed: st.quizzesCounted,
         quizzesTotal,
         correctCount: st.correctCount,
-        prizeCredits: prizeOf.get(st.userId) ?? 0,
+        prizeCredits: prizeOf.get(st.userId)?.credits ?? 0,
+        prizeStars: prizeOf.get(st.userId)?.stars ?? 0,
         tournamentName: t.name,
         finishedAt: now,
       })),
@@ -304,7 +328,7 @@ export async function finishTournament(id: string, now = new Date()) {
       level: "INFO",
       kind: "tournament.finished",
       title: `${st.rank <= 3 ? `${MEDAL[st.rank - 1]} ` : ""}Terminaste #${st.rank} de ${standings.length} en ${t.name}`,
-      body: prize ? `Ganaste ${formatNumber(prize)} créditos de premio.` : `Sumaste ${formatNumber(st.points)} puntos.`,
+      body: prize ? `Ganaste ${prizeText(prize)} de premio.` : `Sumaste ${formatNumber(st.points)} puntos.`,
       href: `/torneos/${t.slug}`,
       dedupeKey: `tournament.finished:${id}`,
     });

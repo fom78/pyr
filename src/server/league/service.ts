@@ -3,20 +3,28 @@ import { getCategorySettings, getSettings } from "@/server/config/service";
 import { UserError, NotFoundError } from "@/server/errors";
 import { getActiveBan } from "@/server/users/bans";
 import { recomputeCategoryStandings } from "@/server/ranking/service";
-import { checkJoin, effectiveStatus, leaveDates, livesUsed } from "./lives";
+import { getInventory } from "@/server/inventory/service";
+import { checkJoin, effectiveStatus, leaveDates, lifeCapacity, livesUsed, livesView } from "./lives";
 
 export async function getUserMemberships(userId: string, db: Db = prisma) {
   return db.categoryMembership.findMany({ where: { userId }, include: { category: true }, orderBy: { joinedAt: "asc" } });
 }
 
-/** Resumen de vidas para mostrar al usuario. */
+/** Resumen de vidas para mostrar al usuario (`max` = vidas desbloqueadas; `cap` = tope). */
 export async function getLivesSummary(userId: string, now = new Date(), db: Db = prisma) {
-  const [memberships, s] = await Promise.all([getUserMemberships(userId, db), getSettings(db)]);
+  const [memberships, inv, s] = await Promise.all([getUserMemberships(userId, db), getInventory(userId, db), getSettings(db)]);
   const used = livesUsed(memberships, now);
+  const capacity = lifeCapacity({ base: s["lives.max"], extra: inv.extraLives, cap: s["lives.cap"] });
+  const view = livesView(used, capacity, s["lives.cap"]);
   return {
-    max: s["lives.max"],
+    max: capacity,
     used,
-    free: Math.max(0, s["lives.max"] - used),
+    free: view.free,
+    locked: view.locked,
+    cap: view.cap,
+    stars: inv.stars,
+    starsPerLife: s["lives.starsPerLife"],
+    canExchange: view.locked > 0 && inv.stars >= s["lives.starsPerLife"],
     active: memberships.filter((m) => effectiveStatus(m, now) === "ACTIVE"),
     leaving: memberships.filter((m) => effectiveStatus(m, now) === "LEAVING"),
     memberships,
@@ -30,8 +38,13 @@ export async function joinCategory(userId: string, categoryId: string, now = new
   return db.$transaction(async (tx) => {
     // Serializa operaciones de vidas del mismo usuario
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
-    const [memberships, s] = await Promise.all([tx.categoryMembership.findMany({ where: { userId } }), getSettings(tx)]);
-    const check = checkJoin(memberships, categoryId, s["lives.max"], now);
+    const [memberships, inv, s] = await Promise.all([
+      tx.categoryMembership.findMany({ where: { userId } }),
+      getInventory(userId, tx),
+      getSettings(tx),
+    ]);
+    const capacity = lifeCapacity({ base: s["lives.max"], extra: inv.extraLives, cap: s["lives.cap"] });
+    const check = checkJoin(memberships, categoryId, capacity, now);
     if (!check.ok) throw new UserError(check.message, check.reason);
     // Las inscripciones vencidas (LEAVING ya liberada) se marcan LEFT al pasar
     await tx.categoryMembership.updateMany({

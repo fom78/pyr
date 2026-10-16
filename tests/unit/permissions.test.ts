@@ -27,6 +27,8 @@ describe("can()", () => {
   it("backups solo admin; tickets los atienden admin y mod", () => {
     expect(can(admin, "backup.manage")).toBe(true);
     expect(can(mod, "backup.manage")).toBe(false);
+    expect(can(admin, "inventory.adjust")).toBe(true);
+    expect(can(mod, "inventory.adjust")).toBe(false);
     expect(can(mod, "ticket.manage")).toBe(true);
     expect(can(user, "ticket.manage")).toBe(false);
   });

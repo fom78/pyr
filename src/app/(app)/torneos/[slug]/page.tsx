@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { QuizCard } from "@/components/game/quiz-card";
 import { StandingsTable } from "@/components/game/standings-table";
 import { formatDateTime, formatHours, formatNumber } from "@/lib/format";
+import { parsePrizes, prizeText } from "@/server/tournaments/prizes";
 import { EnrollButton } from "./enroll-button";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -56,7 +57,7 @@ export default async function TournamentPage({
   const wildcardsLeft = entry ? await remainingWildcards(t.id, user.id) : [];
   const reg = registrationState(t, now);
   const scoring = readScoring(t.scoring, { base: 100, timeBonus: 50, wrongPenalty: 0 });
-  const prizes = (t.prizes as { rank: number; credits: number }[]) ?? [];
+  const prizes = parsePrizes(t.prizes);
   const full = Boolean(t.maxParticipants && t._count.entries >= t.maxParticipants);
   const quizzes = t.quizzes
     .map((q) => ({ ...q, derived: getQuizStatus(q, now), questionCount: q._count.questions, attempt: attempts.find((a) => a.quizId === q.id) ?? null }))
@@ -88,7 +89,7 @@ export default async function TournamentPage({
           ? "no se usan en este torneo."
           : `${t.wildcards.map((w) => `${wildcardStrategies[w.type].name} ×${w.quantity}`).join(", ")}. Máximo ${t.wildcardsPerQuiz} por cuestionario; se eligen antes de empezar y no se recuperan.`}
       </li>
-      {prizes.length > 0 && <li>Premios: {prizes.map((p) => `${p.rank}° puesto ${p.credits} créditos`).join(" · ")}. Los empates cobran el premio del puesto.</li>}
+      {prizes.length > 0 && <li>Premios: {prizes.map((p) => `${p.rank}° puesto ${prizeText(p)}`).join(" · ")}. Los empates cobran el premio del puesto.</li>}
       <li>Si el torneo se cancela, se devuelve la inscripción.</li>
     </ul>
   );
@@ -123,7 +124,7 @@ export default async function TournamentPage({
               {result.rank <= 3 ? `${["🥇", "🥈", "🥉"][result.rank - 1]} ` : ""}Terminaste #{result.rank} de {result.participants}
             </strong>{" "}
             con {formatNumber(result.points)} puntos ({result.quizzesPlayed} de {result.quizzesTotal} cuestionarios)
-            {result.prizeCredits > 0 && <> · ganaste {formatNumber(result.prizeCredits)} créditos</>}.
+            {(result.prizeCredits > 0 || result.prizeStars > 0) && <> · ganaste {prizeText({ credits: result.prizeCredits, stars: result.prizeStars })}</>}.
           </p>
         ) : (
           <p className="bg-muted mb-6 rounded-md p-3 text-sm">Este torneo finalizó. ¡Gracias por participar!</p>

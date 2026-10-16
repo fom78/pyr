@@ -6,6 +6,8 @@ import { generateTournamentDrafts, notifyTournamentBank } from "@/server/tournam
 import { createNextEditions, notifySeriesRegistration } from "@/server/tournaments/series";
 import { handleDueDrafts, listPendingDrafts } from "@/server/autoquiz/service";
 import { getTournamentStats } from "@/server/player/tournament-stats";
+import { getInventory } from "@/server/inventory/service";
+import { getBalance } from "@/server/credits/service";
 import { toDateTimeInput } from "@/lib/format";
 import { hasDb, makeCategory, makeQuestions, makeUser, resetDb } from "./helpers";
 
@@ -102,7 +104,10 @@ describe.skipIf(!hasDb)("torneos automáticos", () => {
         endsAt: new Date(now.getTime() - HOUR),
         registrationOpensAt: new Date(now.getTime() - 5 * DAY),
         registrationEndsAt: new Date(now.getTime() - 3 * DAY),
-        prizes: [{ rank: 1, credits: 100 }],
+        prizes: [
+          { rank: 1, credits: 100 },
+          { rank: 2, credits: 0, stars: 3 },
+        ],
         categories: { create: { categoryId: cat.id } },
         entries: { create: [{ userId: ana.id }, { userId: beto.id }] },
       },
@@ -121,11 +126,18 @@ describe.skipIf(!hasDb)("torneos automáticos", () => {
     const results = await prisma.tournamentResult.findMany({ where: { tournamentId: t.id }, orderBy: { rank: "asc" } });
     expect(results).toMatchObject([
       { userId: ana.id, rank: 1, participants: 2, points: 500, prizeCredits: 100, quizzesPlayed: 1, quizzesTotal: 1, tournamentName: "Copa" },
-      { userId: beto.id, rank: 2, prizeCredits: 0 },
+      { userId: beto.id, rank: 2, prizeCredits: 0, prizeStars: 3 },
     ]);
+    expect(await getInventory(beto.id)).toEqual({ stars: 3, extraLives: 0 });
+    expect(await getBalance(beto.id)).toBe(0);
     const notes = await prisma.notification.findMany({ where: { kind: "tournament.finished" }, orderBy: { title: "asc" } });
     expect(notes).toHaveLength(2);
     expect(notes.find((n) => n.userId === ana.id)!.title).toContain("#1 de 2");
+    expect(notes.find((n) => n.userId === beto.id)!.body).toBe("Ganaste 3 ⭐ de premio.");
+    // Repetir no paga dos veces.
+    await prisma.tournament.update({ where: { id: t.id }, data: { status: "PUBLISHED" } });
+    await finishTournament(t.id, now);
+    expect((await getInventory(beto.id)).stars).toBe(3);
 
     // Queda aunque cambien las inscripciones o se recalcule la tabla.
     await prisma.tournamentEntry.deleteMany({ where: { tournamentId: t.id } });

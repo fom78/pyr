@@ -10,6 +10,15 @@ export function rankLabel(rank: number) {
   return rank <= 3 ? `${MEDAL[rank - 1]} #${rank}` : `#${rank}`;
 }
 
+function PrizeTotal({ credits, stars }: { credits: number; stars: number }) {
+  return (
+    <>
+      {formatNumber(credits)}
+      {stars > 0 && <span className="text-sm"> + {formatNumber(stars)} ⭐</span>}
+    </>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="grid gap-0.5 rounded-md border px-3 py-2 text-center">
@@ -19,8 +28,29 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-/** Resumen de torneos del jugador para el perfil: podios, mejor puesto, premios y últimos resultados. */
-export function TournamentStatsCard({ stats, tz }: { stats: Awaited<ReturnType<typeof getTournamentStats>>; tz: string }) {
+/** Premio ganado: "+150 créditos · +5 ⭐". */
+export function PrizeBadge({ credits, stars }: { credits: number; stars: number }) {
+  if (credits <= 0 && stars <= 0) return null;
+  return (
+    <span className="text-success text-xs font-medium">
+      {[credits > 0 && `+${formatNumber(credits)} créditos`, stars > 0 && `+${formatNumber(stars)} ⭐`].filter(Boolean).join(" · ")}
+    </span>
+  );
+}
+
+/**
+ * Resumen de torneos para el perfil: podios, mejor puesto, premios y últimos resultados.
+ * `publicView` (perfil de otro jugador): sin premios y con textos en tercera persona.
+ */
+export function TournamentStatsCard({
+  stats,
+  tz,
+  publicView = false,
+}: {
+  stats: Awaited<ReturnType<typeof getTournamentStats>>;
+  tz: string;
+  publicView?: boolean;
+}) {
   const { summary: s, recent } = stats;
   return (
     <Card>
@@ -32,10 +62,16 @@ export function TournamentStatsCard({ stats, tz }: { stats: Awaited<ReturnType<t
       <CardContent className="grid gap-4">
         {s.played === 0 ? (
           <p className="text-muted-foreground text-sm">
-            Todavía no terminaste ningún torneo.{" "}
-            <Link href="/torneos" className="text-primary font-medium hover:underline">
-              Ver torneos abiertos
-            </Link>
+            {publicView ? (
+              "Todavía no terminó ningún torneo."
+            ) : (
+              <>
+                Todavía no terminaste ningún torneo.{" "}
+                <Link href="/torneos" className="text-primary font-medium hover:underline">
+                  Ver torneos abiertos
+                </Link>
+              </>
+            )}
           </p>
         ) : (
           <>
@@ -43,11 +79,16 @@ export function TournamentStatsCard({ stats, tz }: { stats: Awaited<ReturnType<t
               <Stat label="jugados" value={s.played} />
               <Stat label="podios" value={`🥇${s.podiums.first} 🥈${s.podiums.second} 🥉${s.podiums.third}`} />
               <Stat label="mejor puesto" value={s.bestRank ? `#${s.bestRank}` : "—"} />
-              <Stat label="créditos en premios" value={formatNumber(s.prizeCredits)} />
+              {publicView ? (
+                <Stat label="en el 10 % de arriba" value={s.topTen} />
+              ) : (
+                <Stat label="premios" value={<PrizeTotal credits={s.prizeCredits} stars={s.prizeStars} />} />
+              )}
             </div>
             <p className="text-muted-foreground text-xs">
-              Terminaste en el 10 % de arriba {s.topTen} {s.topTen === 1 ? "vez" : "veces"} · en promedio por encima del{" "}
-              {s.avgPercentile}% de los participantes.
+              {publicView
+                ? `En promedio terminó por encima del ${s.avgPercentile}% de los participantes.`
+                : `Terminaste en el 10 % de arriba ${s.topTen} ${s.topTen === 1 ? "vez" : "veces"} · en promedio por encima del ${s.avgPercentile}% de los participantes.`}
             </p>
             <ul className="grid gap-1.5 text-sm">
               {recent.map((r) => (
@@ -63,14 +104,16 @@ export function TournamentStatsCard({ stats, tz }: { stats: Awaited<ReturnType<t
                         de {r.participants} · {formatNumber(r.points)} pts · {formatDate(r.finishedAt, tz)}
                       </span>
                     </span>
-                    {r.prizeCredits > 0 && <span className="text-success text-xs font-medium">+{formatNumber(r.prizeCredits)} créditos</span>}
+                    {!publicView && <PrizeBadge credits={r.prizeCredits} stars={r.prizeStars} />}
                   </Link>
                 </li>
               ))}
             </ul>
-            <Link href="/perfil/torneos" className="text-primary text-sm font-medium hover:underline">
-              Ver todos mis torneos
-            </Link>
+            {!publicView && (
+              <Link href="/perfil/torneos" className="text-primary text-sm font-medium hover:underline">
+                Ver todos mis torneos
+              </Link>
+            )}
           </>
         )}
       </CardContent>

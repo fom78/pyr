@@ -38,11 +38,11 @@ model User {
 
   sessions           Session[]
   accounts           Account[]
-  bans               Ban[]                @relation("BannedUser")
-  bansIssued         Ban[]                @relation("BanIssuer")
+  bans               Ban[]                  @relation("BannedUser")
+  bansIssued         Ban[]                  @relation("BanIssuer")
   auditLogs          AuditLog[]
-  questionsAuthored  Question[]           @relation("QuestionAuthor")
-  questionsReviewed  Question[]           @relation("QuestionReviewer")
+  questionsAuthored  Question[]             @relation("QuestionAuthor")
+  questionsReviewed  Question[]             @relation("QuestionReviewer")
   importJobs         ImportJob[]
   attempts           Attempt[]
   memberships        CategoryMembership[]
@@ -51,14 +51,16 @@ model User {
   tournamentEntries  TournamentEntry[]
   tournamentStanding TournamentStanding[]
   tournamentResults  TournamentResult[]
-  creditTransactions CreditTransaction[]  @relation("CreditOwner")
-  creditsIssued      CreditTransaction[]  @relation("CreditIssuer")
+  creditTransactions CreditTransaction[]    @relation("CreditOwner")
+  creditsIssued      CreditTransaction[]    @relation("CreditIssuer")
+  inventory          InventoryTransaction[] @relation("InventoryOwner")
+  inventoryIssued    InventoryTransaction[] @relation("InventoryIssuer")
   quizzesCreated     Quiz[]
   tournamentsCreated Tournament[]
   notifications      Notification[]
   backupsRequested   Backup[]
-  tickets            Ticket[]             @relation("TicketAuthor")
-  ticketsAssigned    Ticket[]             @relation("TicketAssignee")
+  tickets            Ticket[]               @relation("TicketAuthor")
+  ticketsAssigned    Ticket[]               @relation("TicketAssignee")
   ticketEvents       TicketEvent[]
 }
 
@@ -643,6 +645,7 @@ model TournamentResult {
   quizzesTotal   Int
   correctCount   Int
   prizeCredits   Int        @default(0)
+  prizeStars     Int        @default(0)
   tournamentName String
   finishedAt     DateTime
 
@@ -688,6 +691,40 @@ model CreditTransaction {
 
   @@index([userId, createdAt])
   @@index([externalRef])
+}
+
+// ───────────────────────────── Inventario (vidas extra y estrellas) ─────────────────────────────
+
+enum InventoryAsset {
+  EXTRA_LIFE
+  STAR
+}
+
+enum InventoryTxType {
+  ADMIN_GRANT
+  ADMIN_REVOKE
+  TOURNAMENT_PRIZE
+  EXCHANGE
+  PURCHASE
+}
+
+/// Ledger de vidas extra y estrellas: el saldo de cada `asset` es la suma de sus movimientos.
+model InventoryTransaction {
+  id             String          @id @default(cuid())
+  userId         String
+  user           User            @relation("InventoryOwner", fields: [userId], references: [id], onDelete: Cascade)
+  asset          InventoryAsset
+  amount         Int // positivo = alta, negativo = baja
+  type           InventoryTxType
+  reason         String
+  idempotencyKey String          @unique
+  meta           Json?
+  createdById    String?
+  createdBy      User?           @relation("InventoryIssuer", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime        @default(now())
+
+  @@index([userId, asset])
+  @@index([userId, createdAt])
 }
 
 // ───────────────────────────── Notificaciones ─────────────────────────────

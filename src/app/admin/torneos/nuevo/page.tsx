@@ -43,6 +43,7 @@ export default async function NewTournamentPage() {
           wildcardsPerQuiz: s["tournament.wildcardsPerQuiz"],
           wildcards: { DOUBLE_TOTAL: 1, DOUBLE_PER_CORRECT: 1, TRIPLE_SURPRISE: 1 },
           prizes: "150, 75, 30",
+          prizeStars: "",
           base: s["scoring.base"],
           timeBonus: s["scoring.timeBonus"],
           wrongPenalty: s["scoring.wrongPenalty"],

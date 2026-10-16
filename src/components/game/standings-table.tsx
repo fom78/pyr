@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { HelpTip } from "@/components/common";
@@ -12,6 +13,22 @@ export type StandingRowView = {
   quizzesCounted: number;
   user: { name: string; username: string | null };
 };
+
+/** Nombre y @usuario; con usuario, lleva a su perfil público. */
+export function PlayerName({ name, username }: { name: string; username: string | null }) {
+  const body = (
+    <>
+      <span className="block max-w-[40vw] truncate sm:max-w-none">{name}</span>
+      {username && <span className="text-xs text-muted-foreground">@{username}</span>}
+    </>
+  );
+  if (!username) return body;
+  return (
+    <Link href={`/jugadores/${encodeURIComponent(username)}`} className="block hover:underline">
+      {body}
+    </Link>
+  );
+}
 
 function Trend({ rank, previous }: { rank: number; previous: number | null }) {
   if (previous === null) return <span className="text-xs text-muted-foreground">nuevo</span>;
@@ -53,8 +70,7 @@ export function StandingsTable({
         {r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : r.rank}
       </TableCell>
       <TableCell>
-        <span className="block max-w-[40vw] truncate sm:max-w-none">{r.user.name}</span>
-        {r.user.username && <span className="text-xs text-muted-foreground">@{r.user.username}</span>}
+        <PlayerName name={r.user.name} username={r.user.username} />
       </TableCell>
       <TableCell className="text-right font-semibold tabular-nums">{formatNumber(r.points)}</TableCell>
       <TableCell className="hidden text-right tabular-nums sm:table-cell">{r.quizzesCounted}</TableCell>

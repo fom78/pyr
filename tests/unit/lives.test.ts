@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkJoin, effectiveStatus, leaveDates, livesUsed, type MembershipLike } from "@/server/league/lives";
+import { checkJoin, effectiveStatus, leaveDates, lifeCapacity, livesUsed, livesView, type MembershipLike } from "@/server/league/lives";
 
 const now = new Date("2026-03-10T12:00:00Z");
 const day = 86_400_000;
@@ -46,5 +46,25 @@ describe("vidas", () => {
     expect(d.lifeReleasesAt.getTime() - now.getTime()).toBe(7 * day);
     expect(d.rejoinAllowedAt.getTime() - now.getTime()).toBe(14 * day);
     expect(leaveDates(now, 7, 3).rejoinAllowedAt.getTime() - now.getTime()).toBe(7 * day);
+  });
+});
+
+describe("vidas desbloqueadas (iniciales + extra, hasta el tope)", () => {
+  it("suma las extra sin pasar el tope", () => {
+    expect(lifeCapacity({ base: 3, extra: 0, cap: 5 })).toBe(3);
+    expect(lifeCapacity({ base: 3, extra: 1, cap: 5 })).toBe(4);
+    expect(lifeCapacity({ base: 3, extra: 9, cap: 5 })).toBe(5);
+  });
+
+  it("un tope menor que las iniciales no las recorta y un saldo negativo no resta", () => {
+    expect(lifeCapacity({ base: 3, extra: 2, cap: 2 })).toBe(3);
+    expect(lifeCapacity({ base: 3, extra: -1, cap: 5 })).toBe(3);
+  });
+
+  it("vista: usadas, libres y bloqueadas", () => {
+    expect(livesView(2, 3, 5)).toEqual({ used: 2, free: 1, locked: 2, capacity: 3, cap: 5 });
+    // Le quitaron una vida en uso: no quedan libres.
+    expect(livesView(4, 3, 5)).toMatchObject({ free: 0, locked: 2 });
+    expect(livesView(0, 3, 3)).toMatchObject({ free: 3, locked: 0 });
   });
 });

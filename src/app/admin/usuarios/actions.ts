@@ -5,6 +5,7 @@ import { z } from "zod";
 import { authorize } from "@/server/auth/guard";
 import { adjustCredits, banUser, revokeBan, setUserRole } from "@/server/users/service";
 import { toFormState, type FormState } from "@/server/actions";
+import { adjustStars, grantExtraLife } from "@/server/inventory/service";
 import { fromDateTimeInput } from "@/lib/format";
 
 export async function setRoleAction(userId: string, _prev: FormState, fd: FormData): Promise<FormState> {
@@ -47,6 +48,29 @@ export async function adjustCreditsAction(userId: string, _prev: FormState, fd: 
     await adjustCredits(userId, { amount: fd.get("amount"), reason: fd.get("reason") }, actor);
     revalidatePath(`/admin/usuarios/${userId}`);
     return { ok: true, message: "Créditos ajustados." };
+  } catch (err) {
+    return toFormState(err);
+  }
+}
+
+export async function extraLifeAction(userId: string, _prev: FormState, fd: FormData): Promise<FormState> {
+  try {
+    const actor = await authorize("inventory.adjust");
+    const delta = Number(fd.get("delta"));
+    await grantExtraLife(userId, { delta, reason: fd.get("reason") }, actor);
+    revalidatePath(`/admin/usuarios/${userId}`);
+    return { ok: true, message: delta > 0 ? "Vida extra entregada." : "Vida extra quitada." };
+  } catch (err) {
+    return toFormState(err);
+  }
+}
+
+export async function adjustStarsAction(userId: string, _prev: FormState, fd: FormData): Promise<FormState> {
+  try {
+    const actor = await authorize("inventory.adjust");
+    await adjustStars(userId, { amount: fd.get("amount"), reason: fd.get("reason") }, actor);
+    revalidatePath(`/admin/usuarios/${userId}`);
+    return { ok: true, message: "Estrellas ajustadas." };
   } catch (err) {
     return toFormState(err);
   }

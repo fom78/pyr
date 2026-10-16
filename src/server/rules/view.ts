@@ -12,6 +12,8 @@ export function rulesFromSettings(s: Settings) {
   const slow = Math.round((limit * 3) / 4);
   return {
     lives: s["lives.max"],
+    livesCap: Math.max(s["lives.cap"], s["lives.max"]),
+    starsPerLife: s["lives.starsPerLife"],
     leaveCooldownDays: s["league.leaveCooldownDays"],
     rejoinBlockDays: Math.max(s["league.rejoinBlockDays"], s["league.leaveCooldownDays"]),
     bestK: s["ranking.bestK"],

@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Heart, Play, Plus, Trophy } from "lucide-react";
+import { Play, Plus, Trophy } from "lucide-react";
 import { requireUser } from "@/server/auth/session";
 import { getHomeData } from "@/server/player/queries";
-import { getSettings } from "@/server/config/service";
+import { getLivesSummary } from "@/server/league/service";
+import { LivesHearts } from "@/components/game/lives-hearts";
 import { EmptyState, HelpTip } from "@/components/common";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,11 +14,11 @@ import { formatDate, formatDateTime, fromNow } from "@/lib/format";
 export default async function HomePage() {
   const user = await requireUser();
   if (!user.onboardedAt) redirect("/bienvenida");
-  const [data, s] = await Promise.all([getHomeData(user.id), getSettings()]);
+  const [data, lives] = await Promise.all([getHomeData(user.id), getLivesSummary(user.id)]);
   const tz = user.timezone;
   const featured = data.inProgress ? null : data.pending[0];
   const activeMemberships = data.memberships.filter((m) => m.effective === "ACTIVE");
-  const freeLives = s["lives.max"] - data.memberships.length;
+  const freeLives = lives.free;
 
   return (
     <div className="grid gap-6">
@@ -71,19 +72,18 @@ export default async function HomePage() {
           <h2 className="font-semibold">
             Mi liga{" "}
             <HelpTip>
-              Tenés {s["lives.max"]} vidas: podés participar en hasta {s["lives.max"]} categorías a la vez.
+              Tenés {lives.max} vidas: podés participar en hasta {lives.max} categorías a la vez.
+              {lives.locked > 0 && ` Podés desbloquear hasta ${lives.cap} con estrellas.`}
             </HelpTip>
           </h2>
-          <span className="flex items-center gap-0.5" aria-label={`${data.memberships.length} de ${s["lives.max"]} vidas en uso`}>
-            {Array.from({ length: s["lives.max"] }, (_, i) => (
-              <Heart key={i} className={i < data.memberships.length ? "size-4 fill-destructive text-destructive" : "size-4 text-muted-foreground"} />
-            ))}
-          </span>
+          <Link href="/creditos#estrellas">
+            <LivesHearts used={lives.used} free={lives.free} locked={lives.locked} />
+          </Link>
         </div>
         {data.memberships.length === 0 ? (
           <EmptyState
             title="Todavía no participás en ninguna categoría"
-            description={`Elegí hasta ${s["lives.max"]} para empezar a jugar.`}
+            description={`Elegí hasta ${lives.max} para empezar a jugar.`}
             action={
               <Button asChild>
                 <Link href="/categorias">Elegir categorías</Link>

@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import { Heart } from "lucide-react";
+import Link from "next/link";
 import { requireUser } from "@/server/auth/session";
 import { getLeagueOverview } from "@/server/player/queries";
 import { getSettings } from "@/server/config/service";
 import { HelpTip, PageHeader } from "@/components/common";
 import { CategoryCard } from "@/components/game/category-card";
+import { LivesHearts } from "@/components/game/lives-hearts";
 
 export const metadata: Metadata = { title: "Liga" };
 
@@ -32,12 +33,15 @@ export default async function LeaguePage() {
         description={
           <span className="inline-flex flex-wrap items-center gap-1">
             Elegí tus categorías y competí en cada una. Vidas:
-            {Array.from({ length: lives.max }, (_, i) => (
-              <Heart key={i} className={i < lives.used ? "size-4 fill-destructive text-destructive" : "size-4 text-muted-foreground"} aria-hidden />
-            ))}
+            <LivesHearts used={lives.used} free={lives.free} locked={lives.locked} />
             <span className="ml-1">
               {lives.free} {lives.free === 1 ? "libre" : "libres"} de {lives.max}
             </span>
+            {lives.canExchange && (
+              <Link href="/creditos#estrellas" className="ml-1 text-primary underline-offset-4 hover:underline">
+                Desbloquear otra con ⭐
+              </Link>
+            )}
             <HelpTip>
               Cada vida te permite participar en una categoría. Al abandonar una, la vida tarda {s["league.leaveCooldownDays"]} días en liberarse.
             </HelpTip>

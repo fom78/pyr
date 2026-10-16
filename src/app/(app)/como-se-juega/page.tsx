@@ -74,6 +74,13 @@ export default async function HowToPlayPage() {
               libera para otra categoría. A la misma categoría podés volver recién {r.rejoinBlockDays} días después de haber salido. Tu
               historial no se borra.
             </p>
+            {r.livesCap > r.lives && (
+              <p>
+                Podés llegar a tener hasta <strong>{r.livesCap} vidas</strong>. Las que faltan se desbloquean canjeando{" "}
+                <strong>{r.starsPerLife} ⭐ estrellas</strong> por cada una (las estrellas se ganan como premio en algunos torneos) o
+                porque el equipo de PyR te regala una. Una vida desbloqueada es tuya para siempre.
+              </p>
+            )}
           </Section>
           <Section title="🗓️ Los cuestionarios">
             <p>

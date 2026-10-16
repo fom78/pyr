@@ -2,12 +2,13 @@ import { notFound } from "next/navigation";
 import { requirePermission, userCan } from "@/server/auth/session";
 import { prisma } from "@/server/db";
 import { getBalance } from "@/server/credits/service";
+import { getLifeStatus, listInventoryTransactions } from "@/server/inventory/service";
 import { isBanActive } from "@/server/users/bans";
 import { PageHeader } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDateTime, formatNumber } from "@/lib/format";
-import { AdjustCreditsForm, BanForm, RevokeBanButton, RoleForm } from "./forms";
+import { AdjustCreditsForm, AdjustStarsForm, BanForm, ExtraLifeForm, RevokeBanButton, RoleForm } from "./forms";
 import { ROLE_LABEL } from "../labels";
 
 export const metadata = { title: "Usuario" };
@@ -26,11 +27,14 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
     },
   });
   if (!u) notFound();
-  const [balance, canRole, canBan, canCredits] = await Promise.all([
+  const [balance, lives, inventory, canRole, canBan, canCredits, canInventory] = await Promise.all([
     getBalance(u.id),
+    getLifeStatus(u.id),
+    listInventoryTransactions(u.id, 20),
     userCan(actor, "user.setRole"),
     userCan(actor, "user.ban"),
     userCan(actor, "credits.adjust"),
+    userCan(actor, "inventory.adjust"),
   ]);
   const tz = actor.timezone;
   const activeBan = u.bans.find((b) => isBanActive(b));
@@ -53,7 +57,10 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
           </CardHeader>
           <CardContent className="grid gap-2 text-sm">
             <p>
-              Saldo: <strong>{formatNumber(balance)} créditos</strong> · {u._count.attempts} intentos
+              Saldo: <strong>{formatNumber(balance)} créditos</strong> · {formatNumber(lives.stars)} ⭐ · {u._count.attempts} intentos
+            </p>
+            <p>
+              Vidas: <strong>{lives.capacity}</strong> de {lives.cap} ({lives.base} iniciales + {lives.extraLives} extra) · usa {lives.used}
             </p>
             <p>
               Categorías:{" "}
@@ -103,6 +110,39 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
             </CardHeader>
             <CardContent>
               <AdjustCreditsForm userId={u.id} />
+            </CardContent>
+          </Card>
+        )}
+
+        {canInventory && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Vidas y estrellas</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-6">
+              <div className="grid gap-2">
+                <p className="text-muted-foreground text-xs">
+                  Las vidas extra son permanentes. Quitar una que está en uso no lo saca de ninguna categoría: solo no puede sumar otra.
+                </p>
+                <ExtraLifeForm userId={u.id} canGive={lives.capacity < lives.cap} canTake={lives.extraLives > 0} />
+              </div>
+              <AdjustStarsForm userId={u.id} />
+              {inventory.length > 0 && (
+                <ul className="grid gap-1 text-sm">
+                  {inventory.map((t) => (
+                    <li key={t.id} className="flex justify-between gap-2">
+                      <span className="truncate">
+                        {t.reason}
+                        {t.createdBy && <span className="text-muted-foreground text-xs"> · {t.createdBy.name}</span>}
+                      </span>
+                      <span className={t.amount > 0 ? "text-success tabular-nums" : "text-destructive tabular-nums"}>
+                        {t.amount > 0 ? "+" : ""}
+                        {t.amount} {t.asset === "STAR" ? "⭐" : "❤"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
         )}

@@ -35,6 +35,7 @@ export type TournamentFormValues = {
   wildcardsPerQuiz: number;
   wildcards: Record<string, number>;
   prizes: string; // "150, 75, 30"
+  prizeStars: string; // "5, 2"
   base: number;
   timeBonus: number;
   wrongPenalty: number;
@@ -259,6 +260,14 @@ export function TournamentForm({
             placeholder="150, 75, 30"
             hint="Separados por coma: 1° puesto, 2°, 3°…"
             errors={fe?.prizes}
+            className="sm:col-span-2"
+          />
+          <Field
+            label="Premios en estrellas ⭐ por puesto (opcional)"
+            name="prizeStars"
+            defaultValue={v?.prizeStars ?? initial.prizeStars}
+            placeholder="5, 2, 1"
+            hint="Mismo orden que los créditos. Las estrellas se canjean por vidas extra. Dejalo vacío si no da estrellas."
             className="sm:col-span-2"
           />
         </CardContent>

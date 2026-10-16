@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { authorize } from "@/server/auth/guard";
+import { prizesFromLists } from "@/server/tournaments/prizes";
 import { cancelTournament, generateTournamentQuizzes, publishTournament, saveTournament, stopRepeating } from "@/server/tournaments/service";
 import { formValues, toFormState, type FormState } from "@/server/actions";
 import { DEFAULT_TZ, fromDateTimeInput } from "@/lib/format";
@@ -14,11 +15,7 @@ export async function saveTournamentAction(id: string | null, _prev: FormState, 
     const user = await authorize("tournament.manage");
     // El formulario carga y muestra el calendario en hora de Buenos Aires (como el de la liga).
     const date = (k: string) => fromDateTimeInput(String(fd.get(k) ?? ""), DEFAULT_TZ);
-    const prizes = String(fd.get("prizes") ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((credits, i) => ({ rank: i + 1, credits: Number(credits) }));
+    const prizes = prizesFromLists(String(fd.get("prizes") ?? ""), String(fd.get("prizeStars") ?? ""));
     const t = await saveTournament(
       id,
       {

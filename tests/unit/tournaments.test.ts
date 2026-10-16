@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { timelineIssues, tournamentTimeline } from "@/server/tournaments/timeline";
 import { pickAcrossCategories, splitQuota } from "@/server/tournaments/pick";
 import { percentile, summarizeResults } from "@/server/player/tournament-summary";
+import { parsePrizes, prizeList, prizesFromLists, prizeText } from "@/server/tournaments/prizes";
 import { toDateTimeInput } from "@/lib/format";
 
 const BA = "America/Argentina/Buenos_Aires";
@@ -97,5 +98,39 @@ describe("resumen de torneos del perfil", () => {
     expect(summarizeResults([])).toMatchObject({ played: 0, bestRank: null, avgPercentile: null });
     expect(percentile(1, 1)).toBe(100);
     expect(percentile(10, 10)).toBe(0);
+  });
+});
+
+describe("premios de torneo (créditos y estrellas)", () => {
+  it("arma los puestos desde las dos listas y descarta los que no dan nada", () => {
+    expect(prizesFromLists("150, 75, 30", "5, 0, 1")).toEqual([
+      { rank: 1, credits: 150, stars: 5 },
+      { rank: 2, credits: 75, stars: 0 },
+      { rank: 3, credits: 30, stars: 1 },
+    ]);
+    expect(prizesFromLists("100", "0, 3")).toEqual([
+      { rank: 1, credits: 100, stars: 0 },
+      { rank: 2, credits: 0, stars: 3 },
+    ]);
+    expect(prizesFromLists("", "")).toEqual([]);
+    // Un valor inválido llega a la validación (no se descarta en silencio).
+    expect(prizesFromLists("abc", "")[0].credits).toBeNaN();
+  });
+
+  it("lee los torneos viejos (sin estrellas) y arma las listas del formulario", () => {
+    const json = [{ rank: 2, credits: 75 }, { rank: 1, credits: 150, stars: 5 }];
+    expect(parsePrizes(json)).toEqual([
+      { rank: 1, credits: 150, stars: 5 },
+      { rank: 2, credits: 75, stars: 0 },
+    ]);
+    expect(prizeList(json, "credits")).toBe("150, 75");
+    expect(prizeList(json, "stars")).toBe("5");
+    expect(prizeList([], "stars")).toBe("");
+    expect(parsePrizes(null)).toEqual([]);
+  });
+
+  it("texto del premio", () => {
+    expect(prizeText({ credits: 150, stars: 5 })).toBe("150 créditos + 5 ⭐");
+    expect(prizeText({ credits: 0, stars: 2 })).toBe("2 ⭐");
   });
 });

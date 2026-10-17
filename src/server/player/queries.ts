@@ -40,6 +40,8 @@ export async function getHomeData(userId: string, now = new Date()) {
         closesAt: { gt: now },
         opensAt: { lt: new Date(now.getTime() + 7 * DAY) },
         OR: [{ categoryId: { in: categoryIds }, tournamentId: null }, { tournamentId: { in: tournamentIds } }],
+        // De una eliminatoria, solo los partidos propios.
+        AND: [{ OR: [{ match: null }, { match: { OR: [{ playerAId: userId }, { playerBId: userId }] } }] }],
       },
       include: { category: true, tournament: true, _count: { select: { questions: { where: { voided: false } } } } },
       orderBy: { closesAt: "asc" },

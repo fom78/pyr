@@ -15,6 +15,9 @@ import { TournamentForm } from "../tournament-form";
 import { TournamentActions } from "./tournament-actions";
 import { TOURNAMENT_STATUS } from "../labels";
 import { prizeList } from "@/server/tournaments/prizes";
+import { getBracket, knockoutCapacity } from "@/server/tournaments/knockout";
+import { qualifierSources } from "@/server/tournaments/service";
+import { Bracket } from "@/components/game/bracket";
 
 export const metadata = { title: "Torneo" };
 
@@ -27,11 +30,21 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
       categories: true,
       wildcards: true,
       quizzes: { orderBy: { opensAt: "asc" }, include: { _count: { select: { questions: true, attempts: true } } } },
-      entries: { include: { user: { select: { name: true, username: true } } }, orderBy: { enrolledAt: "asc" } },
+      entries: {
+        include: { user: { select: { name: true, username: true } }, qualifiedFrom: { select: { name: true } } },
+        orderBy: [{ seed: "asc" }, { enrolledAt: "asc" }],
+      },
+      qualifiers: { include: { source: { select: { name: true, status: true } } } },
     },
   });
   if (!t) notFound();
-  const categories = await prisma.category.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, icon: true } });
+  const ko = t.format === "KNOCKOUT";
+  const [categories, sources, bracket, capacity] = await Promise.all([
+    prisma.category.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, icon: true } }),
+    qualifierSources(t.id),
+    ko ? getBracket(t.id) : null,
+    ko ? knockoutCapacity(t.id) : null,
+  ]);
   const tz = user.timezone;
   const scoring = readScoring(t.scoring, { base: 100, timeBonus: 50, wrongPenalty: 0 });
   const editable = t.status === "DRAFT" || t.status === "PUBLISHED";
@@ -68,7 +81,7 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
           <TournamentActions
             id={t.id}
             status={t.status}
-            missingQuizzes={t.autoQuizzes ? 0 : slots.filter((x) => !x.quiz).length}
+            missingQuizzes={t.autoQuizzes || ko ? 0 : slots.filter((x) => !x.quiz).length}
             entries={t.entries.length}
             cost={t.entryCost}
             repeats={Boolean(t.repeatEveryDays)}
@@ -81,6 +94,8 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
             id={t.id}
             categories={categories}
             started={t.startsAt <= now}
+            formatLocked={t.status !== "DRAFT"}
+            sources={sources}
             now={now.toISOString()}
             initial={{
               name: t.name,
@@ -105,12 +120,50 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
               prizes: prizeList(t.prizes, "credits"),
               prizeStars: prizeList(t.prizes, "stars"),
               ...scoring,
+              format: t.format,
+              seeding: t.seeding,
+              autoConfirmQualified: t.autoConfirmQualified,
+              thirdPlaceMatch: t.thirdPlaceMatch,
+              questionSource: t.questionSource,
+              uniqueQuestions: t.uniqueQuestions,
+              qualifiers: t.qualifiers.map((q) => ({ sourceTournamentId: q.sourceTournamentId, topN: q.topN })),
             }}
           />
         ) : (
           <p className="text-muted-foreground text-sm">Este torneo ya no se puede editar.</p>
         )}
-        <div className="grid content-start gap-6">
+        <div className="grid min-w-0 content-start gap-6">
+          {ko && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Cuadro</CardTitle>
+                <p className="text-muted-foreground text-xs">
+                  {bracket?.matches.length
+                    ? "Cada partido tiene su cuestionario, que se arma solo cuando se conocen los dos jugadores."
+                    : `Se arma solo al cerrar la inscripción (${formatDateTime(t.registrationEndsAt, tz)}).`}
+                </p>
+              </CardHeader>
+              <CardContent>
+                {bracket?.matches.length ? (
+                  <Bracket bracket={bracket} tz={tz} quizHref={(id) => `/admin/cuestionarios/${id}`} />
+                ) : (
+                  capacity && (
+                    <ul className="grid gap-1 text-sm">
+                      <li>
+                        Cuadro de hasta {capacity.max}: {capacity.entries} inscriptos, {capacity.reserved} lugares reservados, {capacity.open} abiertos.
+                      </li>
+                      {t.qualifiers.map((q) => (
+                        <li key={q.id} className="text-muted-foreground text-xs">
+                          {q.source.name}: primeros {q.topN} · {q.appliedAt ? "ya inscriptos" : "cuando termine"}
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                )}
+              </CardContent>
+            </Card>
+          )}
+          {!ko && (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">
@@ -181,6 +234,7 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
               </Link>
             </CardContent>
           </Card>
+          )}
           {series.length > 0 && (
             <Card>
               <CardHeader>
@@ -209,7 +263,16 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
                 <ul className="grid gap-1 text-sm">
                   {t.entries.map((e) => (
                     <li key={e.id} className="flex justify-between gap-2">
-                      <span>{e.user.name}</span>
+                      <span>
+                        {e.seed && <span className="text-muted-foreground mr-1 text-xs tabular-nums">#{e.seed}</span>}
+                        {e.user.name}
+                        {e.qualifiedFrom && (
+                          <span className="text-muted-foreground block text-xs">
+                            {e.qualifiedRank}° en {e.qualifiedFrom.name}
+                            {!e.confirmedAt && " · sin confirmar"}
+                          </span>
+                        )}
+                      </span>
                       <span className="text-muted-foreground text-xs">{formatDateTime(e.enrolledAt, tz)}</span>
                     </li>
                   ))}

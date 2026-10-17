@@ -65,7 +65,11 @@ export async function notifyQuizOpened(now = new Date(), db: Db = prisma) {
       openNotifiedAt: null,
       OR: [{ tournamentId: null, categoryId: { not: null } }, { tournament: { status: "PUBLISHED" } }],
     },
-    include: { category: true, tournament: { select: { id: true, name: true, slug: true } } },
+    include: {
+      category: true,
+      tournament: { select: { id: true, name: true, slug: true } },
+      match: { select: { playerAId: true, playerBId: true } },
+    },
     orderBy: { opensAt: "asc" },
     take: BATCH,
   });
@@ -77,7 +81,12 @@ export async function notifyQuizOpened(now = new Date(), db: Db = prisma) {
       // Torneo: a los inscriptos (no baneados).
       if ((await getSettings(db))["notify.newQuiz"]) {
         const entries = await db.tournamentEntry.findMany({
-          where: { tournamentId: quiz.tournament.id, user: { bans: { none: activeBanWhere(now) } } },
+          where: {
+            tournamentId: quiz.tournament.id,
+            user: { bans: { none: activeBanWhere(now) } },
+            // Partido de eliminatoria: solo sus dos jugadores.
+            ...(quiz.match ? { userId: { in: [quiz.match.playerAId, quiz.match.playerBId].filter((x): x is string => Boolean(x)) } } : {}),
+          },
           select: { userId: true },
         });
         sent += await notifyUsers(
@@ -85,7 +94,7 @@ export async function notifyQuizOpened(now = new Date(), db: Db = prisma) {
           {
             level: "INFO",
             kind: "quiz.opened",
-            title: `🏆 Nueva fecha en ${quiz.tournament.name}`,
+            title: quiz.match ? `⚔️ Tu partido de ${quiz.tournament.name} ya está abierto` : `🏆 Nueva fecha en ${quiz.tournament.name}`,
             body,
             href: `/torneos/${quiz.tournament.slug}`,
             dedupeKey: `quiz.opened:${quiz.id}`,

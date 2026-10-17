@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { tournamentTimeline } from "@/server/tournaments/timeline";
+import { BRACKET_SIZES, bracketQuestionNeed, roundsFor } from "@/server/tournaments/bracket";
 import { DEFAULT_TZ, formatDate, fromDateTimeInput } from "@/lib/format";
 import { saveTournamentAction } from "./actions";
 
@@ -39,7 +40,16 @@ export type TournamentFormValues = {
   base: number;
   timeBonus: number;
   wrongPenalty: number;
+  format: "POINTS" | "KNOCKOUT";
+  seeding: "QUALIFICATION" | "RANDOM";
+  autoConfirmQualified: boolean;
+  thirdPlaceMatch: boolean;
+  questionSource: "NEW_FIRST" | "REUSED_FIRST";
+  uniqueQuestions: number | null;
+  qualifiers: { sourceTournamentId: string; topN: number }[];
 };
+
+const SELECT = "border-input bg-background h-9 rounded-md border px-3 text-sm";
 
 const WILDCARDS = [
   { type: "DOUBLE_TOTAL", name: "Doble total" },
@@ -54,6 +64,8 @@ export function TournamentForm({
   initial,
   categories,
   started,
+  formatLocked,
+  sources = [],
   now,
 }: {
   id: string | null;
@@ -61,6 +73,10 @@ export function TournamentForm({
   categories: { id: string; name: string; icon: string | null }[];
   /** Ya empezó: los tiempos quedan bloqueados. */
   started?: boolean;
+  /** Ya se publicó: el formato no se cambia. */
+  formatLocked?: boolean;
+  /** Torneos que pueden dar clasificados a una eliminatoria. */
+  sources?: { id: string; name: string }[];
   /** Instante de render (ISO), para la vista previa. */
   now: string;
 }) {
@@ -74,15 +90,22 @@ export function TournamentForm({
   const [active, setActive] = useState(num("quizActiveHours"));
   const [lead, setLead] = useState(num("registrationLeadDays"));
   const [late, setLate] = useState(num("lateEntryDays"));
+  const [format, setFormat] = useState<string>(v?.format ?? initial.format);
+  const [maxP, setMaxP] = useState(num("maxParticipants") || "32");
+  const [qualifiers, setQualifiers] = useState(initial.qualifiers);
+  const [perMatch, setPerMatch] = useState(num("questionsPerQuiz"));
+  const [unique, setUnique] = useState(num("uniqueQuestions"));
+  const need = bracketQuestionNeed(Number(maxP) || 4, Number(perMatch) || 0, unique ? Number(unique) : null, false);
+  const ko = format === "KNOCKOUT";
 
   const preview = useMemo(() => {
     const t = {
       startsAt: fromDateTimeInput(startsAt, DEFAULT_TZ),
-      quizCount: Number(quizCount),
+      quizCount: ko ? roundsFor(Number(maxP) || 2) : Number(quizCount),
       frequencyHours: Number(freq),
-      quizActiveHours: Number(active),
+      quizActiveHours: ko ? Number(freq) : Number(active),
       registrationLeadDays: Number(lead),
-      lateEntryDays: Number(late),
+      lateEntryDays: ko ? 0 : Number(late),
     };
     const ok =
       !Number.isNaN(t.startsAt.getTime()) &&
@@ -90,7 +113,7 @@ export function TournamentForm({
       [t.registrationLeadDays, t.lateEntryDays].every((n) => Number.isInteger(n) && n >= 0) &&
       t.quizCount <= 100;
     return ok ? tournamentTimeline(t, new Date(now)) : null;
-  }, [startsAt, quizCount, freq, active, lead, late, now]);
+  }, [startsAt, quizCount, freq, active, lead, late, now, ko, maxP]);
   const d = (x: Date) => formatDate(x, DEFAULT_TZ, "EEE d/M HH:mm");
   const span = Number(active) / Number(freq);
 
@@ -105,6 +128,15 @@ export function TournamentForm({
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre" name="name" required defaultValue={v?.name ?? initial.name} errors={fe?.name} />
           <Field label="Identificador (slug)" name="slug" defaultValue={v?.slug ?? initial.slug} errors={fe?.slug} hint="Vacío = se genera del nombre." />
+          <div className="grid gap-1.5 sm:col-span-2">
+            <Label htmlFor="format">Formato</Label>
+            {formatLocked && <input type="hidden" name="format" value={format} />}
+            <select id="format" name="format" className={SELECT} value={format} disabled={formatLocked} onChange={(e) => setFormat(e.target.value)}>
+              <option value="POINTS">Por puntos: todos juegan los mismos cuestionarios y suman</option>
+              <option value="KNOCKOUT">Eliminatoria: partidos 1 contra 1, el que gana pasa de ronda</option>
+            </select>
+            {formatLocked && <p className="text-muted-foreground text-xs">El formato no se cambia después de publicar.</p>}
+          </div>
           <div className="grid gap-1.5 sm:col-span-2">
             <Label htmlFor="description">Descripción</Label>
             <Textarea id="description" name="description" defaultValue={v?.description ?? initial.description} maxLength={3000} />
@@ -143,13 +175,13 @@ export function TournamentForm({
               <Input readOnly={started} id="startsAt" name="startsAt" type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
               <FieldErrors errors={fe?.startsAt} />
             </div>
-            <div className="grid content-start gap-1.5">
+            <div className={ko ? "hidden" : "grid content-start gap-1.5"}>
               <Label htmlFor="quizCount">Cuestionarios</Label>
               <Input readOnly={started} id="quizCount" name="quizCount" type="number" min={1} max={100} required value={quizCount} onChange={(e) => setQuizCount(e.target.value)} />
               <FieldErrors errors={fe?.quizCount} />
             </div>
             <div className="grid content-start gap-1.5">
-              <Label htmlFor="frequencyHours">Uno cada (horas)</Label>
+              <Label htmlFor="frequencyHours">{ko ? "Cada ronda dura (horas)" : "Uno cada (horas)"}</Label>
               <div className="flex flex-wrap items-center gap-2">
                 <Input readOnly={started} id="frequencyHours" name="frequencyHours" type="number" min={1} required value={freq} onChange={(e) => setFreq(e.target.value)} className="w-24" />
                 {!started && PRESET_HOURS.map((h) => (
@@ -158,9 +190,10 @@ export function TournamentForm({
                   </Button>
                 ))}
               </div>
+              {ko && <p className="text-muted-foreground text-xs">Un partido por ronda: cada jugador tiene ese tiempo para jugarlo. 24 o 48 h dan margen.</p>}
               <FieldErrors errors={fe?.frequencyHours} />
             </div>
-            <div className="grid content-start gap-1.5">
+            <div className={ko ? "hidden" : "grid content-start gap-1.5"}>
               <Label htmlFor="quizActiveHours">Cada uno queda abierto (horas)</Label>
               <Input readOnly={started} id="quizActiveHours" name="quizActiveHours" type="number" min={1} max={168} required value={active} onChange={(e) => setActive(e.target.value)} />
               <p className="text-muted-foreground text-xs">
@@ -173,7 +206,7 @@ export function TournamentForm({
               <Input readOnly={started} id="registrationLeadDays" name="registrationLeadDays" type="number" min={0} max={60} required value={lead} onChange={(e) => setLead(e.target.value)} />
               <p className="text-muted-foreground text-xs">0 = apenas se publica.</p>
             </div>
-            <div className="grid content-start gap-1.5">
+            <div className={ko ? "hidden" : "grid content-start gap-1.5"}>
               <Label htmlFor="lateEntryDays">Se pueden sumar hasta (días después de empezar)</Label>
               <Input readOnly={started} id="lateEntryDays" name="lateEntryDays" type="number" min={0} max={60} required value={late} onChange={(e) => setLate(e.target.value)} />
               <p className="text-muted-foreground text-xs">0 = la inscripción cierra cuando empieza. Quien entra tarde ya perdió fechas.</p>
@@ -187,7 +220,7 @@ export function TournamentForm({
                 {d(preview.registrationEndsAt)}
               </p>
               <p>
-                <strong>{preview.slots.length} cuestionarios:</strong> {d(preview.slots[0])}
+                <strong>{preview.slots.length} {ko ? "rondas (con el cuadro lleno)" : "cuestionarios"}:</strong> {d(preview.slots[0])}
                 {preview.slots.length > 1 && <> … {d(preview.slots.at(-1)!)}</>}
               </p>
               <p>
@@ -202,7 +235,7 @@ export function TournamentForm({
           <CardTitle>Cuestionarios</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="flex items-start gap-2 sm:col-span-2">
+          <div className={ko ? "hidden" : "flex items-start gap-2 sm:col-span-2"}>
             <Switch id="autoQuizzes" name="autoQuizzes" defaultChecked={v ? v.autoQuizzes === "on" : initial.autoQuizzes} />
             <div className="grid gap-0.5">
               <Label htmlFor="autoQuizzes">Armarlos solos con el banco</Label>
@@ -213,14 +246,44 @@ export function TournamentForm({
             </div>
           </div>
           <Field
-            label="Preguntas por cuestionario"
+            label={ko ? "Preguntas por partido" : "Preguntas por cuestionario"}
             name="questionsPerQuiz"
             type="number"
             min={1}
             max={100}
-            defaultValue={v?.questionsPerQuiz ?? initial.questionsPerQuiz}
+            value={perMatch}
+            onChange={(e) => setPerMatch(e.target.value)}
             errors={fe?.questionsPerQuiz}
           />
+          {ko ? (
+            <>
+              <Field
+                label="Preguntas propias de cada partido (opcional)"
+                name="uniqueQuestions"
+                type="number"
+                min={1}
+                max={100}
+                value={unique}
+                onChange={(e) => setUnique(e.target.value)}
+                errors={fe?.uniqueQuestions}
+                hint="Ej. 5 de 10: cada partido lleva 5 preguntas solo suyas y las otras 5 se sortean (en otro orden) de un pozo común de 10 de la ronda. Así difieren entre partidos (pasarle las respuestas a un amigo sirve poco) y se gasta menos banco. Vacío = todas distintas."
+              />
+              <div className="grid content-start gap-1.5">
+                <Label htmlFor="questionSource">De dónde salen las preguntas</Label>
+                <select id="questionSource" name="questionSource" className={SELECT} defaultValue={v?.questionSource ?? initial.questionSource}>
+                  <option value="NEW_FIRST">Nuevas primero (si faltan, reutilizadas si la config lo permite)</option>
+                  <option value="REUSED_FIRST">Reutilizadas primero, para cuidar el banco (si faltan, nuevas)</option>
+                </select>
+                <p className="text-muted-foreground text-xs">
+                  Reutilizadas = usadas hace más de los días de la config (Calendario automático). Nunca se repiten preguntas dentro del torneo.
+                </p>
+              </div>
+              <p className="text-muted-foreground text-sm sm:col-span-2">
+                Cada partido tiene su cuestionario (el mismo para los dos, mezclado), que se arma solo cuando se conocen los dos jugadores. Un cuadro
+                de {maxP} lleno necesita hasta <strong>{need}</strong> preguntas.
+              </p>
+            </>
+          ) : (
           <Field
             label="Repetir cada (días)"
             name="repeatEveryDays"
@@ -231,6 +294,7 @@ export function TournamentForm({
             hint="Ej. 7 = torneo semanal: cuando empieza, se crea solo la próxima edición con la misma configuración. Vacío = no se repite."
             errors={fe?.repeatEveryDays}
           />
+          )}
         </CardContent>
       </Card>
       <Card>
@@ -239,7 +303,24 @@ export function TournamentForm({
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <Field label="Costo (créditos)" name="entryCost" type="number" min={0} defaultValue={v?.entryCost ?? initial.entryCost} hint="No se puede cambiar cuando ya hay inscriptos." />
-          <Field label="Cupo máximo (opcional)" name="maxParticipants" type="number" min={2} defaultValue={v?.maxParticipants ?? initial.maxParticipants ?? ""} />
+          {ko ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="maxParticipants">Tamaño máximo del cuadro</Label>
+              <select id="maxParticipants" name="maxParticipants" className={SELECT} value={maxP} onChange={(e) => setMaxP(e.target.value)}>
+                {BRACKET_SIZES.map((n) => (
+                  <option key={n} value={n}>
+                    {n} jugadores
+                  </option>
+                ))}
+              </select>
+              <p className="text-muted-foreground text-xs">
+                Si se anotan menos, el cuadro se achica (31 → 32) y los lugares que faltan son pases libres para los mejores sembrados.
+              </p>
+              <FieldErrors errors={fe?.maxParticipants} />
+            </div>
+          ) : (
+            <Field label="Cupo máximo (opcional)" name="maxParticipants" type="number" min={2} defaultValue={v?.maxParticipants ?? initial.maxParticipants ?? ""} />
+          )}
           <Field label="Comodines por cuestionario" name="wildcardsPerQuiz" type="number" min={0} max={3} defaultValue={v?.wildcardsPerQuiz ?? initial.wildcardsPerQuiz} />
           <div />
           {WILDCARDS.map((w) => (
@@ -258,7 +339,11 @@ export function TournamentForm({
             name="prizes"
             defaultValue={v?.prizes ?? initial.prizes}
             placeholder="150, 75, 30"
-            hint="Separados por coma: 1° puesto, 2°, 3°…"
+            hint={
+              ko
+                ? "Separados por coma por puesto: 1° campeón, 2° finalista, 3° semifinalistas (3° y 4° con partido por el tercer puesto), 5° los de cuartos, 9° los de octavos… Ej. «150, 75, 30, 0, 10» da 10 a los de cuartos."
+                : "Separados por coma: 1° puesto, 2°, 3°…"
+            }
             errors={fe?.prizes}
             className="sm:col-span-2"
           />
@@ -272,6 +357,91 @@ export function TournamentForm({
           />
         </CardContent>
       </Card>
+      {ko && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Eliminatoria</CardTitle>
+            <CardDescription>
+              Gana el partido quien hace más puntos; si empatan, más aciertos, después menos tiempo y por último el mejor sembrado. Quien no juega
+              antes del cierre pierde por W.O. (si no juega ninguno, pasa el mejor sembrado). El resultado se ve cuando jugaron los dos.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="grid gap-1.5">
+              <Label htmlFor="seeding">Siembra</Label>
+              <select id="seeding" name="seeding" className={SELECT} defaultValue={v?.seeding ?? initial.seeding}>
+                <option value="QUALIFICATION">Por clasificación: primero los clasificados por puesto, después el resto por su historial en torneos</option>
+                <option value="RANDOM">Sorteo</option>
+              </select>
+            </div>
+            <div className="flex items-start gap-2">
+              <Switch id="thirdPlaceMatch" name="thirdPlaceMatch" defaultChecked={v ? v.thirdPlaceMatch === "on" : initial.thirdPlaceMatch} />
+              <Label htmlFor="thirdPlaceMatch">Partido por el tercer puesto (entre los que pierden las semifinales)</Label>
+            </div>
+            <fieldset className="grid gap-2">
+              <legend className="mb-1 text-sm font-medium">Clasificatorios</legend>
+              <p className="text-muted-foreground text-xs">
+                Los primeros N de cada torneo entran gratis cuando ese torneo termina. Sus lugares quedan reservados mientras tanto; el resto del cupo es
+                inscripción abierta con costo.
+              </p>
+              {qualifiers.map((q, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-2">
+                  <select
+                    name="q.source"
+                    className={`${SELECT} min-w-0 flex-1`}
+                    value={q.sourceTournamentId}
+                    onChange={(e) => setQualifiers(qualifiers.map((x, j) => (j === i ? { ...x, sourceTournamentId: e.target.value } : x)))}
+                  >
+                    <option value="">Elegí un torneo…</option>
+                    {sources.map((src) => (
+                      <option key={src.id} value={src.id}>
+                        {src.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-sm">primeros</span>
+                  <Input
+                    name="q.topN"
+                    type="number"
+                    min={1}
+                    className="w-20"
+                    value={q.topN}
+                    onChange={(e) => setQualifiers(qualifiers.map((x, j) => (j === i ? { ...x, topN: Number(e.target.value) } : x)))}
+                  />
+                  <Button type="button" variant="ghost" size="sm" onClick={() => setQualifiers(qualifiers.filter((_, j) => j !== i))}>
+                    Quitar
+                  </Button>
+                </div>
+              ))}
+              {qualifiers.length < 10 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="justify-self-start"
+                  onClick={() => setQualifiers([...qualifiers, { sourceTournamentId: "", topN: 4 }])}
+                >
+                  + Agregar clasificatorio
+                </Button>
+              )}
+              <FieldErrors errors={fe?.qualifiers} />
+            </fieldset>
+            <div className="flex items-start gap-2">
+              <Switch
+                id="autoConfirmQualified"
+                name="autoConfirmQualified"
+                defaultChecked={v ? v.autoConfirmQualified === "on" : initial.autoConfirmQualified}
+              />
+              <div className="grid gap-0.5">
+                <Label htmlFor="autoConfirmQualified">Inscribir a los clasificados sin que tengan que confirmar</Label>
+                <p className="text-muted-foreground text-xs">
+                  Apagado: confirman su lugar antes de que cierre la inscripción; si no, lo pierden (y puede haber más pases libres).
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       <Card>
         <CardHeader>
           <CardTitle>Puntaje de los cuestionarios</CardTitle>

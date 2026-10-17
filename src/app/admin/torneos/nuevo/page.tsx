@@ -3,16 +3,17 @@ import { prisma } from "@/server/db";
 import { getSettings } from "@/server/config/service";
 import { PageHeader } from "@/components/common";
 import { DEFAULT_TZ, toDateTimeInput } from "@/lib/format";
-import { suggestTournamentDefaults } from "@/server/tournaments/service";
+import { qualifierSources, suggestTournamentDefaults } from "@/server/tournaments/service";
 import { TournamentForm } from "../tournament-form";
 
 export const metadata = { title: "Nuevo torneo" };
 
 export default async function NewTournamentPage() {
   await requirePermission("tournament.manage");
-  const [categories, s] = await Promise.all([
+  const [categories, s, sources] = await Promise.all([
     prisma.category.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true, icon: true } }),
     getSettings(),
+    qualifierSources(),
   ]);
   const now = new Date();
   const d = suggestTournamentDefaults(now);
@@ -27,6 +28,7 @@ export default async function NewTournamentPage() {
         id={null}
         categories={categories}
         now={now.toISOString()}
+        sources={sources}
         initial={{
           name: "",
           slug: "",
@@ -47,6 +49,13 @@ export default async function NewTournamentPage() {
           base: s["scoring.base"],
           timeBonus: s["scoring.timeBonus"],
           wrongPenalty: s["scoring.wrongPenalty"],
+          format: "POINTS",
+          seeding: "QUALIFICATION",
+          autoConfirmQualified: true,
+          thirdPlaceMatch: false,
+          questionSource: "NEW_FIRST",
+          uniqueQuestions: null,
+          qualifiers: [],
         }}
       />
     </>

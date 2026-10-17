@@ -50,11 +50,35 @@ export default async function ResultPage({ params }: { params: Promise<{ attempt
           </CardContent>
         </Card>
       </div>
-      <p className="mb-2 text-sm text-muted-foreground">
-        Posición <strong>en este cuestionario</strong>: {r.position}° de {r.participants}
-        {r.status === "ACTIVE" && " (puede cambiar mientras siga abierto)"}.
-      </p>
-      {quiz.tournament ? (
+      {r.match ? (
+        <p className="mb-4 flex gap-2 rounded-md border bg-muted/40 p-3 text-sm">
+          <Trophy className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span>
+            {!r.match.decided ? (
+              <>
+                Partido contra <strong>{r.match.opponent ? `@${r.match.opponent.username ?? r.match.opponent.name}` : "tu rival"}</strong>: el resultado
+                se conoce cuando los dos terminen (o al cierre, {formatDateTime(quiz.closesAt, user.timezone)}).
+              </>
+            ) : (
+              <>
+                {r.match.won ? "✅ ¡Ganaste el partido" : "Perdiste el partido"}
+                {r.match.opponent && <> contra @{r.match.opponent.username ?? r.match.opponent.name}</>}
+                {r.match.opponentScore != null && <> ({formatNumber(attempt.score)} a {formatNumber(r.match.opponentScore)})</>}
+                {r.match.result === "WALKOVER" ? " por W.O." : r.match.result === "TIEBREAK" ? " por desempate" : ""}.
+              </>
+            )}{" "}
+            <Link href={`${back.href}`} className="font-medium text-primary underline-offset-4 hover:underline">
+              Ver cuadro
+            </Link>
+          </span>
+        </p>
+      ) : (
+        <p className="mb-2 text-sm text-muted-foreground">
+          Posición <strong>en este cuestionario</strong>: {r.position}° de {r.participants}
+          {r.status === "ACTIVE" && " (puede cambiar mientras siga abierto)"}.
+        </p>
+      )}
+      {r.match ? null : quiz.tournament ? (
         <p className="mb-4 flex gap-2 rounded-md border bg-muted/40 p-3 text-sm">
           <Trophy className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
           <span>

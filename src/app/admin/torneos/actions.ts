@@ -42,6 +42,16 @@ export async function saveTournamentAction(id: string | null, _prev: FormState, 
         })),
         prizes,
         scoring: { base: fd.get("base"), timeBonus: fd.get("timeBonus"), wrongPenalty: fd.get("wrongPenalty") },
+        format: fd.get("format") ?? "POINTS",
+        seeding: fd.get("seeding") ?? "QUALIFICATION",
+        autoConfirmQualified: fd.get("autoConfirmQualified") === "on",
+        thirdPlaceMatch: fd.get("thirdPlaceMatch") === "on",
+        questionSource: fd.get("questionSource") ?? "NEW_FIRST",
+        uniqueQuestions: fd.get("uniqueQuestions") ? Number(fd.get("uniqueQuestions")) : null,
+        qualifiers: fd
+          .getAll("q.source")
+          .map((source, i) => ({ sourceTournamentId: String(source), topN: fd.getAll("q.topN")[i] }))
+          .filter((q) => q.sourceTournamentId),
       },
       user,
     );

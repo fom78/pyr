@@ -31,7 +31,7 @@ export async function getAttemptResult(attemptId: string, userId: string, now = 
   // Posición dentro del cuestionario (entre los que ya terminaron)
   const others = await prisma.attempt.findMany({
     where: { quizId: attempt.quizId, status: { in: ["FINISHED", "TIMED_OUT"] } },
-    select: { id: true, score: true, correctCount: true, totalTimeMs: true, finishedAt: true },
+    select: { id: true, userId: true, score: true, correctCount: true, totalTimeMs: true, finishedAt: true },
   });
   const sorted = others.sort(compareResults);
   const position = sorted.findIndex((o) => o.id === attempt.id) + 1;
@@ -40,6 +40,24 @@ export async function getAttemptResult(attemptId: string, userId: string, now = 
     ? {
         name: getStrategy(attempt.wildcardUse.type).name,
         reveal: attempt.status !== "IN_PROGRESS" ? getStrategy(attempt.wildcardUse.type).reveal(attempt.wildcardUse.state as Record<string, unknown>) : null,
+      }
+    : null;
+
+  // Eliminatoria: el rival y su puntaje se conocen recién cuando el partido está decidido.
+  const m = attempt.quiz.tournamentId
+    ? await prisma.knockoutMatch.findUnique({
+        where: { quizId: attempt.quizId },
+        include: { playerA: { select: { id: true, name: true, username: true } }, playerB: { select: { id: true, name: true, username: true } } },
+      })
+    : null;
+  const opponent = m ? (m.playerAId === userId ? m.playerB : m.playerA) : null;
+  const match = m
+    ? {
+        opponent,
+        decided: Boolean(m.winnerId),
+        won: m.winnerId === userId,
+        result: m.result,
+        opponentScore: m.winnerId && opponent ? (others.find((o) => o.userId === opponent.id)?.score ?? null) : null,
       }
     : null;
 
@@ -53,6 +71,7 @@ export async function getAttemptResult(attemptId: string, userId: string, now = 
     attempt,
     quiz: attempt.quiz,
     league,
+    match,
     status,
     reveal,
     position,

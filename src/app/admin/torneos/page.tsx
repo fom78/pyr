@@ -41,7 +41,8 @@ export default async function AdminTournamentsPage() {
                   <span className="font-medium">{t.name}</span>
                   <span className="text-xs text-muted-foreground">
                     {formatDate(t.startsAt, user.timezone)} → {formatDate(t.endsAt, user.timezone)} · {t._count.entries} inscriptos ·{" "}
-                    {t._count.quizzes}/{t.quizCount} cuestionarios · {t.entryCost} créditos
+                    {t.format === "KNOCKOUT" ? `eliminatoria de hasta ${t.maxParticipants}` : `${t._count.quizzes}/${t.quizCount} cuestionarios`} ·{" "}
+                    {t.entryCost} créditos
                   </span>
                 </div>
                 <Badge variant={t.status === "PUBLISHED" ? "default" : "secondary"}>{TOURNAMENT_STATUS[t.status]}</Badge>

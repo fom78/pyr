@@ -57,6 +57,10 @@ export async function checkCanPlay(userId: string, quizId: string, now = new Dat
   if (quiz.tournamentId) {
     const entry = await prisma.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: quiz.tournamentId, userId } } });
     if (!entry) return { ok: false as const, reason: "Tenés que estar inscripto en el torneo." };
+    if (!entry.confirmedAt) return { ok: false as const, reason: "Primero confirmá tu lugar en el torneo." };
+    // Eliminatoria: el cuestionario de un partido es solo de sus dos jugadores.
+    const match = await prisma.knockoutMatch.findUnique({ where: { quizId }, select: { playerAId: true, playerBId: true } });
+    if (match && match.playerAId !== userId && match.playerBId !== userId) return { ok: false as const, reason: "Este partido es de otros jugadores." };
   } else if (quiz.categoryId) {
     if (!(await isActiveMember(userId, quiz.categoryId, now)))
       return { ok: false as const, reason: "Tenés que estar inscripto en la categoría para jugar." };
@@ -381,6 +385,12 @@ export async function finalizeAttempt(attemptId: string, now = new Date()) {
     else if (attempt.quiz.categoryId) await recomputeCategoryStandings(attempt.quiz.categoryId, now);
   } catch (err) {
     logger.error({ err, attemptId }, "error al recalcular la tabla tras el intento");
+  }
+  try {
+    // Eliminatoria: si ya jugaron los dos, se decide el partido.
+    if (attempt.quiz.tournamentId) await (await import("@/server/tournaments/knockout")).settleForQuiz(attempt.quizId, now);
+  } catch (err) {
+    logger.error({ err, attemptId }, "error al decidir el partido tras el intento");
   }
 }
 

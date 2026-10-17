@@ -123,6 +123,9 @@ export async function recomputeCategoryStandings(categoryId: string, now = new D
 
 /** Tabla de torneo: suma de todos los cuestionarios del torneo (con comodines ya aplicados). */
 export async function recomputeTournamentStandings(tournamentId: string, now = new Date(), db: Db = prisma) {
+  // Eliminatoria: no hay tabla de puntos (el cuadro manda y los puntajes del rival no se muestran antes de tiempo).
+  const t = await db.tournament.findUnique({ where: { id: tournamentId }, select: { format: true } });
+  if (t?.format === "KNOCKOUT") return;
   const [entries, quizzes, banned] = await Promise.all([
     db.tournamentEntry.findMany({ where: { tournamentId }, select: { userId: true } }),
     db.quiz.findMany({ where: { tournamentId, publishedAt: { not: null } }, select: { id: true } }),

@@ -51,6 +51,8 @@ model User {
   tournamentEntries  TournamentEntry[]
   tournamentStanding TournamentStanding[]
   tournamentResults  TournamentResult[]
+  matchesAsA         KnockoutMatch[]        @relation("MatchPlayerA")
+  matchesAsB         KnockoutMatch[]        @relation("MatchPlayerB")
   creditTransactions CreditTransaction[]    @relation("CreditOwner")
   creditsIssued      CreditTransaction[]    @relation("CreditIssuer")
   inventory          InventoryTransaction[] @relation("InventoryOwner")
@@ -350,6 +352,7 @@ model Quiz {
 
   questions QuizQuestion[]
   attempts  Attempt[]
+  match     KnockoutMatch?
 
   @@unique([scheduleId, slotAt])
   @@unique([tournamentId, slotAt])
@@ -515,6 +518,28 @@ enum TournamentStatus {
   CANCELLED
 }
 
+enum TournamentFormat {
+  POINTS // todos juegan los mismos cuestionarios y suman
+  KNOCKOUT // eliminatoria: partidos 1 contra 1, el que gana avanza
+}
+
+enum SeedingMode {
+  QUALIFICATION // por puesto en el torneo de origen; los demás por desempeño en torneos y sorteo
+  RANDOM
+}
+
+enum QuestionSource {
+  NEW_FIRST // nunca usadas primero; si faltan, reutilizadas (si la config lo permite)
+  REUSED_FIRST // reutilizadas primero (cuida el banco); si faltan, nuevas
+}
+
+enum MatchResult {
+  PLAYED
+  BYE
+  WALKOVER
+  TIEBREAK
+}
+
 enum WildcardType {
   DOUBLE_TOTAL
   DOUBLE_PER_CORRECT
@@ -528,6 +553,15 @@ model Tournament {
   description          String?
   imageKey             String?
   status               TournamentStatus @default(DRAFT)
+  format               TournamentFormat @default(POINTS)
+  // Eliminatoria: frequencyHours = duración de cada ronda; maxParticipants = tamaño máximo del cuadro (potencia de 2).
+  seeding              SeedingMode      @default(QUALIFICATION)
+  autoConfirmQualified Boolean          @default(true) // los clasificados desde otros torneos quedan inscriptos sin confirmar
+  thirdPlaceMatch      Boolean          @default(false)
+  questionSource       QuestionSource   @default(NEW_FIRST)
+  // Preguntas exclusivas de cada partido; el resto se sortea de un pozo común de la ronda (null = todas distintas).
+  uniqueQuestions      Int?
+  knockoutPools        Json             @default("{}") // { "<ronda>": [questionId…] } pozo común de cada ronda
   startsAt             DateTime
   endsAt               DateTime
   registrationOpensAt  DateTime
@@ -559,12 +593,16 @@ model Tournament {
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
-  categories TournamentCategory[]
-  wildcards  TournamentWildcard[]
-  entries    TournamentEntry[]
-  quizzes    Quiz[]
-  standings  TournamentStanding[]
-  results    TournamentResult[]
+  categories       TournamentCategory[]
+  wildcards        TournamentWildcard[]
+  entries          TournamentEntry[]
+  quizzes          Quiz[]
+  standings        TournamentStanding[]
+  results          TournamentResult[]
+  matches          KnockoutMatch[]
+  qualifiers       TournamentQualifier[] @relation("QualifierTarget")
+  feeds            TournamentQualifier[] @relation("QualifierSource")
+  qualifiedEntries TournamentEntry[]     @relation("EntryQualifiedFrom")
 
   @@index([seriesId])
 }
@@ -588,17 +626,63 @@ model TournamentWildcard {
 }
 
 model TournamentEntry {
-  id           String     @id @default(cuid())
-  tournamentId String
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enrolledAt   DateTime   @default(now())
-  ledgerTxId   String?
+  id              String      @id @default(cuid())
+  tournamentId    String
+  tournament      Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrolledAt      DateTime    @default(now())
+  ledgerTxId      String?
+  // Eliminatoria: clasificado desde otro torneo (sin costo) y confirmación de su lugar.
+  qualifiedFromId String?
+  qualifiedFrom   Tournament? @relation("EntryQualifiedFrom", fields: [qualifiedFromId], references: [id], onDelete: SetNull)
+  qualifiedRank   Int?
+  confirmedAt     DateTime? // null = clasificado que todavía no confirmó (no juega)
+  seed            Int? // fijado al armar el cuadro (1 = mejor sembrado)
 
   wildcardUses WildcardUse[]
 
   @@unique([tournamentId, userId])
+}
+
+/// "Los N primeros de X clasifican a esta eliminatoria".
+model TournamentQualifier {
+  id                 String     @id @default(cuid())
+  tournamentId       String
+  tournament         Tournament @relation("QualifierTarget", fields: [tournamentId], references: [id], onDelete: Cascade)
+  sourceTournamentId String
+  source             Tournament @relation("QualifierSource", fields: [sourceTournamentId], references: [id], onDelete: Cascade)
+  topN               Int
+  appliedAt          DateTime? // ya se inscribió a los clasificados (al terminar el origen)
+
+  @@unique([tournamentId, sourceTournamentId])
+  @@index([sourceTournamentId])
+}
+
+/// Partido de una eliminatoria. El ganador de (round, position) pasa a (round + 1, position / 2).
+/// En la última ronda, position 1 es el partido por el tercer puesto.
+model KnockoutMatch {
+  id           String       @id @default(cuid())
+  tournamentId String
+  tournament   Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  round        Int // 1 = primera ronda
+  position     Int
+  playerAId    String?
+  playerA      User?        @relation("MatchPlayerA", fields: [playerAId], references: [id], onDelete: SetNull)
+  playerBId    String?
+  playerB      User?        @relation("MatchPlayerB", fields: [playerBId], references: [id], onDelete: SetNull)
+  seedA        Int?
+  seedB        Int?
+  quizId       String?      @unique
+  quiz         Quiz?        @relation(fields: [quizId], references: [id], onDelete: SetNull)
+  winnerId     String?
+  result       MatchResult?
+  decidedAt    DateTime?
+  opensAt      DateTime
+  closesAt     DateTime
+
+  @@unique([tournamentId, round, position])
+  @@index([closesAt])
 }
 
 model WildcardUse {

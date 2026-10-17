@@ -62,6 +62,7 @@ export default async function TournamentsPage() {
                     <div className="grid gap-1 p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold">{t.name}</span>
+                        {t.format === "KNOCKOUT" && <Badge variant="secondary">⚔️ Eliminatoria</Badge>}
                         {mine.has(t.id) && <Badge>Inscripto</Badge>}
                         {t.status === "FINISHED" && <Badge variant="secondary">Finalizado</Badge>}
                         {reg === "OPEN" && !mine.has(t.id) && <Badge variant="outline">Inscripción abierta</Badge>}

@@ -8,6 +8,7 @@ import { purgeRateBuckets } from "@/server/ratelimit";
 import { finishDueTournaments } from "@/server/tournaments/service";
 import { fillTournamentDrafts, generateTournamentDrafts, notifyTournamentBank } from "@/server/tournaments/auto";
 import { createNextEditions, notifySeriesRegistration } from "@/server/tournaments/series";
+import { runKnockouts } from "@/server/tournaments/knockout";
 import { notifyReviewReady } from "@/server/quiz/review-notify";
 import { notifyQuizOpened, notifyStreakRisk, sendWeeklySummaries } from "@/server/notifications/player";
 import { ensureCoverVariants } from "@/server/storage/images";
@@ -93,6 +94,8 @@ export const tasks = {
   "attempts-expire": { cron: "* * * * *", run: () => expireStaleAttempts() },
   "memberships-release": { cron: "*/10 * * * *", run: () => releaseExpiredLeaves() },
   "tournaments-finish": { cron: "*/5 * * * *", run: () => finishDueTournaments() },
+  // Eliminatorias: cuadro al cerrar la inscripción, partidos vencidos (W.O.) y cuestionarios de cada cruce.
+  knockout: { cron: "* * * * *", run: () => runKnockouts() },
   // Torneos recurrentes: al empezar una edición se crea la siguiente; al abrir su inscripción se avisa.
   "tournaments-series": {
     cron: "5 * * * *",

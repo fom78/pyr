@@ -18,6 +18,9 @@ import { StandingsTable } from "@/components/game/standings-table";
 import { formatDateTime, formatHours, formatNumber } from "@/lib/format";
 import { parsePrizes, prizeText } from "@/server/tournaments/prizes";
 import { EnrollButton } from "./enroll-button";
+import { ConfirmQualificationButton } from "./confirm-button";
+import { Bracket } from "@/components/game/bracket";
+import { getBracket, knockoutCapacity } from "@/server/tournaments/knockout";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
@@ -48,18 +51,24 @@ export default async function TournamentPage({
   if (!t || t.status === "DRAFT") notFound();
   const now = new Date();
   const tz = user.timezone;
-  const [entry, balance, attempts, result] = await Promise.all([
+  const ko = t.format === "KNOCKOUT";
+  const [entry, balance, attempts, result, bracket, capacity] = await Promise.all([
     prisma.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
     getBalance(user.id),
     prisma.attempt.findMany({ where: { userId: user.id, quizId: { in: t.quizzes.map((q) => q.id) } } }),
     prisma.tournamentResult.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
+    ko ? getBracket(t.id) : null,
+    ko ? knockoutCapacity(t.id) : null,
   ]);
   const wildcardsLeft = entry ? await remainingWildcards(t.id, user.id) : [];
   const reg = registrationState(t, now);
   const scoring = readScoring(t.scoring, { base: 100, timeBonus: 50, wrongPenalty: 0 });
   const prizes = parsePrizes(t.prizes);
-  const full = Boolean(t.maxParticipants && t._count.entries >= t.maxParticipants);
+  const full = capacity ? capacity.open <= 0 : Boolean(t.maxParticipants && t._count.entries >= t.maxParticipants);
+  // Eliminatoria: solo se listan los partidos propios.
+  const myQuizIds = new Set(bracket?.matches.filter((m) => m.quizId && (m.a?.id === user.id || m.b?.id === user.id)).map((m) => m.quizId));
   const quizzes = t.quizzes
+    .filter((q) => !ko || myQuizIds.has(q.id))
     .map((q) => ({ ...q, derived: getQuizStatus(q, now), questionCount: q._count.questions, attempt: attempts.find((a) => a.quizId === q.id) ?? null }))
     .sort((a, b) => STATUS_DISPLAY_ORDER[a.derived] - STATUS_DISPLAY_ORDER[b.derived] || a.opensAt.getTime() - b.opensAt.getTime());
   const me = t.standings.find((s) => s.userId === user.id);
@@ -75,10 +84,28 @@ export default async function TournamentPage({
         {t.maxParticipants ? `Cupo: ${t.maxParticipants} participantes.` : "Sin cupo máximo."}
       </li>
       <li>Costo: {t.entryCost === 0 ? "gratis" : `${t.entryCost} créditos`}. No usa vidas.</li>
-      <li>
-        {t.quizCount} cuestionarios, {t.frequencyHours === 24 ? "uno por día" : `uno cada ${formatHours(t.frequencyHours)}`}; cada uno queda abierto{" "}
-        {formatHours(t.quizActiveHours)}. Suman <strong>todos</strong>.
-      </li>
+      {ko && capacity ? (
+        <>
+          <li>
+            <strong>Eliminatoria</strong> de hasta {capacity.max} jugadores
+            {capacity.reserved > 0 && ` (${capacity.reserved} lugares reservados para clasificados de otros torneos)`}. Si se anotan menos, el cuadro se
+            achica y los que faltan son pases libres para los mejores sembrados.
+          </li>
+          <li>
+            Un partido por ronda contra un rival, con un cuestionario igual para los dos (mezclado). Cada ronda dura {formatHours(t.frequencyHours)}.
+          </li>
+          <li>
+            Gana quien hace más puntos; si empatan, más aciertos, después menos tiempo y por último el mejor sembrado. Quien no juega a tiempo
+            pierde por W.O. El resultado se conoce cuando jugaron los dos.
+          </li>
+          {t.thirdPlaceMatch && <li>Los que pierden las semifinales juegan por el tercer puesto.</li>}
+        </>
+      ) : (
+        <li>
+          {t.quizCount} cuestionarios, {t.frequencyHours === 24 ? "uno por día" : `uno cada ${formatHours(t.frequencyHours)}`}; cada uno queda abierto{" "}
+          {formatHours(t.quizActiveHours)}. Suman <strong>todos</strong>.
+        </li>
+      )}
       <li>
         Puntaje: {scoring.base} por acierto + hasta {scoring.timeBonus} por velocidad
         {scoring.wrongPenalty ? `; los errores restan ${scoring.wrongPenalty}` : ""}.
@@ -89,7 +116,12 @@ export default async function TournamentPage({
           ? "no se usan en este torneo."
           : `${t.wildcards.map((w) => `${wildcardStrategies[w.type].name} ×${w.quantity}`).join(", ")}. Máximo ${t.wildcardsPerQuiz} por cuestionario; se eligen antes de empezar y no se recuperan.`}
       </li>
-      {prizes.length > 0 && <li>Premios: {prizes.map((p) => `${p.rank}° puesto ${prizeText(p)}`).join(" · ")}. Los empates cobran el premio del puesto.</li>}
+      {prizes.length > 0 && (
+        <li>
+          Premios: {prizes.map((p) => `${ko ? koPlace(p.rank) : `${p.rank}° puesto`} ${prizeText(p)}`).join(" · ")}.{" "}
+          {ko ? "Los que caen en la misma ronda cobran lo mismo." : "Los empates cobran el premio del puesto."}
+        </li>
+      )}
       <li>Si el torneo se cancela, se devuelve la inscripción.</li>
     </ul>
   );
@@ -101,7 +133,9 @@ export default async function TournamentPage({
         title={t.name}
         description={t.categories.map((c) => `${c.category.icon ?? ""} ${c.category.name}`).join(" · ")}
         actions={
-          entry ? (
+          entry && !entry.confirmedAt && reg === "OPEN" ? (
+            <ConfirmQualificationButton tournamentId={t.id} />
+          ) : entry ? (
             <Badge className="h-8 px-3">✓ Inscripto</Badge>
           ) : t.status === "PUBLISHED" && reg === "OPEN" && !user.banned ? (
             full ? (
@@ -151,22 +185,42 @@ export default async function TournamentPage({
           </Card>
         </div>
       )}
-      <Tabs defaultValue={tab === "tabla" ? "tabla" : entry ? "cuestionarios" : "reglamento"}>
+      {entry?.qualifiedFromId && !entry.confirmedAt && (
+        <p className="bg-warning/15 mb-6 rounded-md p-3 text-sm">
+          Clasificaste ({entry.qualifiedRank}° puesto): confirmá tu lugar antes del {formatDateTime(t.registrationEndsAt, tz)} o lo perdés.
+        </p>
+      )}
+      {ko && capacity && reg === "OPEN" && (
+        <p className="text-muted-foreground mb-4 text-sm">
+          {capacity.open} de {capacity.max} lugares abiertos
+          {capacity.reserved > 0 && `, ${capacity.reserved} reservados para clasificados`} · {capacity.entries} inscriptos.
+        </p>
+      )}
+      <Tabs defaultValue={tab === "tabla" || (ko && !entry) ? "tabla" : entry ? "cuestionarios" : "reglamento"}>
         <TabsList className="mb-4">
-          <TabsTrigger value="cuestionarios">Cuestionarios</TabsTrigger>
-          <TabsTrigger value="tabla">Tabla</TabsTrigger>
+          <TabsTrigger value="cuestionarios">{ko ? "Mis partidos" : "Cuestionarios"}</TabsTrigger>
+          <TabsTrigger value="tabla">{ko ? "Cuadro" : "Tabla"}</TabsTrigger>
           <TabsTrigger value="reglamento">Reglamento</TabsTrigger>
         </TabsList>
         <TabsContent value="cuestionarios" className="grid gap-2">
           {quizzes.length === 0 ? (
-            <EmptyState title="Todavía no hay cuestionarios publicados" />
+            <EmptyState
+              title={ko ? "Todavía no tenés un partido armado" : "Todavía no hay cuestionarios publicados"}
+              description={ko ? "Tu partido aparece acá cuando se conocen los dos jugadores." : undefined}
+            />
           ) : (
             quizzes.map((q) => <QuizCard key={q.id} q={q} canPlay={Boolean(entry) && !user.banned} tz={tz} />)
           )}
           {!entry && quizzes.length > 0 && <p className="text-sm text-muted-foreground">Para jugar tenés que inscribirte en el torneo.</p>}
         </TabsContent>
         <TabsContent value="tabla">
-          {t.standings.length === 0 ? (
+          {ko ? (
+            bracket?.matches.length ? (
+              <Bracket bracket={bracket} meId={user.id} tz={tz} />
+            ) : (
+              <EmptyState title="El cuadro todavía no está armado" description={`Se sortea al cerrar la inscripción (${formatDateTime(t.registrationEndsAt, tz)}).`} />
+            )
+          ) : t.standings.length === 0 ? (
             <EmptyState title="La tabla está vacía" description="Se actualiza a medida que los participantes terminan los cuestionarios." />
           ) : (
             <StandingsTable rows={t.standings} meId={user.id} countedLabel="Jugados" countedHelp="En torneo suman todos los cuestionarios jugados." />
@@ -183,4 +237,14 @@ export default async function TournamentPage({
       </Tabs>
     </>
   );
+}
+
+/** Puesto de premio en una eliminatoria: 1 campeón, 2 finalista, 3 semifinal, 5 cuartos… */
+function koPlace(rank: number) {
+  if (rank === 1) return "Campeón";
+  if (rank === 2) return "Finalista";
+  if (rank === 3) return "3° puesto";
+  if (rank === 4) return "4° puesto";
+  const reached = (rank - 1) * 2;
+  return reached === 8 ? "Llegar a cuartos" : reached === 16 ? "Llegar a octavos" : `Llegar a la ronda de ${reached}`;
 }

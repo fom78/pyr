@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { draftContext } from "@/server/autoquiz/service";
+import { getCategorySettings } from "@/server/config/service";
 import { notFound } from "next/navigation";
 import { requirePermission, userCan } from "@/server/auth/session";
 import { prisma } from "@/server/db";
@@ -59,6 +60,12 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
   // Borrador automático (calendario de liga o torneo con cuestionarios automáticos): reemplazar, regenerar, completar.
   const autoDraft = status === "DRAFT" && (quiz.scheduleId || (quiz.tournamentId && quiz.slotAt && !quiz.createdById));
   const expected = autoDraft ? ((await draftContext(quiz))?.perQuiz ?? 0) : 0;
+  // Cuántas debería llevar (para el selector): las del torneo o las de la liga de la categoría.
+  const target = quiz.tournament
+    ? quiz.tournament.questionsPerQuiz
+    : quiz.category
+      ? (await getCategorySettings(quiz.category))["quiz.questionCount"]
+      : null;
 
   return (
     <>
@@ -133,6 +140,7 @@ export default async function QuizPage({ params }: { params: Promise<{ id: strin
             <QuestionPicker
               quizId={quiz.id}
               categoryFilterId={quiz.categoryId ?? undefined}
+              expected={target}
               selected={quiz.questions.map((qq) => ({
                 id: qq.questionId,
                 text: qq.question.text,

@@ -3,7 +3,7 @@ import { prisma } from "@/server/db";
 import { checkCanPlay, getCurrent, startAttempt, submitAnswer } from "@/server/game/engine";
 import { getAttemptResult } from "@/server/game/results";
 import { enrollInTournament, publishTournament, saveTournament } from "@/server/tournaments/service";
-import { applyQualifiers, buildBracket, confirmQualification, knockoutCapacity, runKnockouts } from "@/server/tournaments/knockout";
+import { applyQualifiers, buildBracket, confirmQualification, ensureMatchQuizzes, knockoutCapacity, runKnockouts } from "@/server/tournaments/knockout";
 import { getBalance } from "@/server/credits/service";
 import { hasDb, makeCategory, makeQuestions, makeUser, resetDb } from "./helpers";
 
@@ -206,5 +206,34 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
     // Reutilizadas primero: el pozo (4) y 6 de las propias salen de las 10 viejas.
     const all = new Set([...pool, ...own]);
     expect([...all].filter((id) => old.includes(id))).toHaveLength(10);
+  });
+  it("sin preguntas nuevas ni viejas usa recientes, y completa un partido corto que nadie empezó", async () => {
+    const admin = await makeUser("ADMIN");
+    const cat = await makeCategory();
+    const qs = await makeQuestions(cat.id, 8);
+    // Todas usadas en un cuestionario que cerró ayer: ni "nuevas" ni "usadas hace más de reuseAfterDays".
+    await prisma.quiz.create({
+      data: {
+        title: "Reciente",
+        categoryId: cat.id,
+        opensAt: new Date(Date.now() - 3 * 24 * HOUR),
+        closesAt: new Date(Date.now() - 24 * HOUR),
+        expiresAt: new Date(Date.now() - 12 * HOUR),
+        publishedAt: new Date(Date.now() - 3 * 24 * HOUR),
+        questions: { create: qs.map((q, position) => ({ questionId: q.id, position })) },
+      },
+    });
+    const ko = await saveTournament(null, input([cat.id], { questionsPerQuiz: 3, uniqueQuestions: 2, questionSource: "REUSED_FIRST" }), admin);
+    await publishTournament(ko.id, admin);
+    for (const u of await Promise.all([1, 2].map(() => makeUser()))) await enrollInTournament(u.id, ko.id);
+    const start = new Date(ko.startsAt.getTime() + MIN);
+    await buildBracket(ko.id, start);
+    const match = await prisma.knockoutMatch.findFirstOrThrow({ where: { tournamentId: ko.id, round: 1, quizId: { not: null } } });
+    expect(await prisma.quizQuestion.count({ where: { quizId: match.quizId! } })).toBe(3);
+
+    // Quedó corto (p. ej. banco vacío en su momento): el worker lo completa mientras nadie haya empezado.
+    await prisma.quizQuestion.deleteMany({ where: { quizId: match.quizId! } });
+    await ensureMatchQuizzes(ko.id, start);
+    expect(await prisma.quizQuestion.count({ where: { quizId: match.quizId! } })).toBe(3);
   });
 });

@@ -1,14 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { ArrowDown, ArrowUp, Loader2, Plus, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Dices, Loader2, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/forms/native-select";
-import { pickerSearchAction, saveQuizQuestionsAction } from "../actions";
+import { pickerSearchAction, randomQuestionsAction, saveQuizQuestionsAction } from "../actions";
 
 type Selected = { id: string; text: string | null; status: string; difficulty: number };
 type Result = Awaited<ReturnType<typeof pickerSearchAction>>;
@@ -16,10 +16,13 @@ type Result = Awaited<ReturnType<typeof pickerSearchAction>>;
 export function QuestionPicker({
   quizId,
   categoryFilterId,
+  expected,
   selected: initial,
 }: {
   quizId: string;
   categoryFilterId?: string;
+  /** Cantidad de preguntas que debería llevar (liga: `quiz.questionCount`; torneo: preguntas por cuestionario). */
+  expected: number | null;
   selected: Selected[];
 }) {
   const [selected, setSelected] = useState(initial);
@@ -30,6 +33,8 @@ export function QuestionPicker({
   const [result, setResult] = useState<Result | null>(null);
   const [searching, startSearch] = useTransition();
   const [saving, startSave] = useTransition();
+  const [randomCount, setRandomCount] = useState(String(Math.max(1, (expected ?? 0) - initial.length) || 5));
+  const [drawing, startDraw] = useTransition();
   const dirty = JSON.stringify(selected.map((s) => s.id)) !== JSON.stringify(initial.map((s) => s.id));
 
   const search = (p = 1) =>
@@ -43,6 +48,19 @@ export function QuestionPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const draw = () =>
+    startDraw(async () => {
+      const n = Math.max(1, Math.min(100, Number(randomCount) || 1));
+      const picks = await randomQuestionsAction(quizId, n, selected.map((s) => s.id));
+      if (!picks.length) return void toast.error("No hay preguntas aprobadas disponibles en el banco.");
+      setSelected((s) => [...s, ...picks]);
+      toast.success(
+        picks.length < n
+          ? `Se agregaron ${picks.length} de ${n}: no hay más disponibles. Guardá la selección.`
+          : `Se agregaron ${picks.length} al azar. Revisalas y guardá la selección.`,
+      );
+    });
+
   const move = (i: number, d: -1 | 1) =>
     setSelected((s) => {
       const a = [...s];
@@ -53,7 +71,10 @@ export function QuestionPicker({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Preguntas ({selected.length})</CardTitle>
+        <CardTitle className="text-base">
+          Preguntas ({selected.length}
+          {expected ? ` de ${expected}` : ""})
+        </CardTitle>
         <CardDescription>Solo se pueden publicar preguntas aprobadas. El orden importa si el cuestionario no mezcla preguntas.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -90,6 +111,28 @@ export function QuestionPicker({
         >
           {saving && <Loader2 className="animate-spin" />} Guardar selección
         </Button>
+
+        <div className="grid gap-2 border-t pt-4">
+          <p className="text-sm font-medium">Elegir al azar del banco</p>
+          <p className="text-xs text-muted-foreground">
+            Aprobadas de {categoryFilterId ? "la categoría" : "las categorías del torneo"}: primero las nunca usadas, después las de uso más viejo.
+            Se suman a la selección; podés quitar las que no quieras antes de guardar.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={randomCount}
+              onChange={(e) => setRandomCount(e.target.value)}
+              className="w-20"
+              aria-label="Cantidad al azar"
+            />
+            <Button type="button" variant="secondary" disabled={drawing} onClick={draw}>
+              {drawing ? <Loader2 className="animate-spin" /> : <Dices />} Agregar al azar
+            </Button>
+          </div>
+        </div>
 
         <div className="grid gap-2 border-t pt-4">
           <p className="text-sm font-medium">Buscar preguntas aprobadas</p>

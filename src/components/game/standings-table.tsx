@@ -31,7 +31,13 @@ export function PlayerName({ name, username }: { name: string; username: string 
 }
 
 function Trend({ rank, previous }: { rank: number; previous: number | null }) {
-  if (previous === null) return <span className="text-xs text-muted-foreground">nuevo</span>;
+  // Sin puesto anterior: entró a la tabla y desde entonces no cambió de lugar.
+  if (previous === null)
+    return (
+      <span title="Sin cambios desde que entró a la tabla">
+        <Minus className="size-3.5 text-muted-foreground" aria-label="Sin cambios desde que entró a la tabla" />
+      </span>
+    );
   if (previous > rank)
     return (
       <span className="inline-flex items-center text-xs text-success" aria-label={`Subió ${previous - rank}`}>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Ticket } from "lucide-react";
+import { ChevronDown, ChevronUp, Ticket } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -32,6 +32,7 @@ export function EnrollButton({
 }) {
   const [open, setOpen] = useState(false);
   const [accepted, setAccepted] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [pending, start] = useTransition();
   const after = balance - cost;
   const enough = after >= 0;
@@ -59,11 +60,35 @@ export function EnrollButton({
           {!enough && <p className="text-sm text-destructive">No te alcanzan los créditos. Jugá cuestionarios de liga para ganar más.</p>}
           <div>
             <p className="mb-2 text-sm font-medium">Reglamento</p>
-            {rules}
+            {/* Plegado: se ve el comienzo y se despliega a pedido, así el diálogo no se hace eterno. */}
+            <div className={`relative overflow-hidden ${rulesOpen ? "" : "max-h-40"}`}>
+              {rules}
+              {!rulesOpen && <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-background to-transparent" />}
+            </div>
+            <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={() => setRulesOpen((o) => !o)} aria-expanded={rulesOpen}>
+              {rulesOpen ? (
+                <>
+                  <ChevronUp /> Ver menos
+                </>
+              ) : (
+                <>
+                  <ChevronDown /> Ver el reglamento completo
+                </>
+              )}
+            </Button>
           </div>
-          <label className="flex items-start gap-2 text-sm">
-            <Checkbox checked={accepted} onCheckedChange={(v) => setAccepted(v === true)} className="mt-0.5" />
-            Leí el reglamento y acepto que se descuenten {cost} créditos. La inscripción no usa vidas.
+          <label
+            className={`flex cursor-pointer items-start gap-3 rounded-md border-2 p-3 text-sm font-medium transition-colors ${
+              accepted ? "border-primary bg-primary/10" : "border-primary/60 bg-muted"
+            }`}
+          >
+            <Checkbox checked={accepted} onCheckedChange={(v) => setAccepted(v === true)} className="mt-0.5 size-5" />
+            <span>
+              {cost > 0
+                ? `Leí el reglamento y acepto que se descuenten ${cost} créditos.`
+                : "Leí el reglamento. La inscripción es gratis."}{" "}
+              La inscripción no usa vidas.
+            </span>
           </label>
         </div>
         <DialogFooter>

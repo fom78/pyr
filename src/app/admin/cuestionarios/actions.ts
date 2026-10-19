@@ -18,7 +18,7 @@ import {
   updateQuiz,
 } from "@/server/quiz/service";
 import { searchQuestions } from "@/server/questions/service";
-import { fillDraft, regenerateDraft, replaceQuestion } from "@/server/autoquiz/service";
+import { fillDraft, regenerateDraft, replaceQuestion, suggestRandomQuestions } from "@/server/autoquiz/service";
 import { formValues, toFormState, type FormState } from "@/server/actions";
 import { fromDateTimeInput } from "@/lib/format";
 
@@ -92,6 +92,12 @@ export async function pickerSearchAction(params: { q?: string; categoryId?: stri
       hasImage: q.type !== "TEXT",
     })),
   };
+}
+
+/** Preguntas al azar del banco para el selector (no guarda: se agregan a la selección). */
+export async function randomQuestionsAction(quizId: string, n: number, exclude: string[]) {
+  await authorize("quiz.manage");
+  return suggestRandomQuestions(quizId, z.number().int().min(1).max(100).parse(n), z.array(z.string()).max(300).parse(exclude));
 }
 
 async function simple(fn: () => Promise<unknown>, path: string): Promise<FormState> {

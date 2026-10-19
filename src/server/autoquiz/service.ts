@@ -192,6 +192,22 @@ export async function loadCandidates(categoryId: string, s: Settings, now: Date,
   return { fresh, reusable };
 }
 
+/**
+ * Último recurso (partidos de eliminatoria, "Al azar" del panel): cualquier aprobada de la categoría que no
+ * esté en un cuestionario abierto o por abrir, la de uso más viejo primero. Ignora `reuseAfterDays`.
+ */
+export async function loadAnyApproved(categoryId: string, now: Date, db: Db = prisma): Promise<ReusableCandidate[]> {
+  const rows = await db.question.findMany({
+    where: { ...buildQuestionWhere({ categoryId, status: "APPROVED" }, now), quizQuestions: { none: { quiz: { closesAt: { gt: now } } } } },
+    select: {
+      id: true,
+      difficulty: true,
+      quizQuestions: { select: { quiz: { select: { opensAt: true } } }, orderBy: { quiz: { opensAt: "desc" } }, take: 1 },
+    },
+  });
+  return rows.map((r) => ({ id: r.id, difficulty: r.difficulty, lastUsedAt: r.quizQuestions[0]?.quiz.opensAt ?? new Date(0) }));
+}
+
 function removePicked<T extends { id: string }>(list: T[], ids: Set<string>) {
   return list.filter((c) => !ids.has(c.id));
 }
@@ -889,6 +905,44 @@ export async function fillIncompleteDrafts(now = new Date(), db: Db = prisma) {
   }
   if (filled) logger.info({ filled }, "borradores automáticos completados");
   return { filled };
+}
+
+/**
+ * Sugiere `n` preguntas al azar para un cuestionario armado a mano (botón "Al azar"): de su categoría o
+ * de las del torneo, sin las que ya eligió. Primero nunca usadas, después las de uso más viejo y, si
+ * hace falta, cualquier aprobada fuera de cuestionarios abiertos o por abrir. No guarda nada.
+ */
+export async function suggestRandomQuestions(quizId: string, n: number, exclude: string[], now = new Date(), db: Db = prisma) {
+  const quiz = await db.quiz.findUnique({
+    where: { id: quizId },
+    include: { category: true, tournament: { include: { categories: { include: { category: true } } } } },
+  });
+  if (!quiz) throw new NotFoundError("Cuestionario");
+  const categories = quiz.tournament ? quiz.tournament.categories.map((c) => c.category) : quiz.category ? [quiz.category] : [];
+  const skip = new Set(exclude);
+  const strip = (p: { fresh: FreshCandidate[]; reusable: ReusableCandidate[] }) => ({
+    fresh: p.fresh.filter((c) => !skip.has(c.id)),
+    reusable: p.reusable.filter((c) => !skip.has(c.id)),
+  });
+  const pools = [];
+  const fallback = [];
+  for (const c of categories) {
+    const s = await getCategorySettings(c, db);
+    pools.push(strip(await loadCandidates(c.id, { ...s, "autoquiz.allowReuse": true }, now, db)));
+    fallback.push(strip({ fresh: [], reusable: await loadAnyApproved(c.id, now, db) }));
+  }
+  const first = pickAcrossCategories(pools, n, { allowReuse: true });
+  const taken = new Set(first.picks.map((p) => p.id));
+  const rest = first.missing
+    ? pickAcrossCategories(
+        fallback.map((f) => ({ fresh: [], reusable: f.reusable.filter((c) => !taken.has(c.id)) })),
+        first.missing,
+        { allowReuse: true },
+      ).picks
+    : [];
+  const ids = [...first.picks, ...rest].map((p) => p.id);
+  const rows = await db.question.findMany({ where: { id: { in: ids } }, select: { id: true, text: true, status: true, difficulty: true } });
+  return ids.map((id) => rows.find((r) => r.id === id)!).filter(Boolean);
 }
 
 /** Completa ya un borrador incompleto (botón "Completar"). */

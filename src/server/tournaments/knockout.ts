@@ -7,7 +7,7 @@ import { logger } from "@/server/logger";
 import { getSettings } from "@/server/config/service";
 import { notifyStaff, notifyUsers } from "@/server/notifications/service";
 import { activeBanWhere } from "@/server/users/bans";
-import { loadCandidates } from "@/server/autoquiz/service";
+import { loadAnyApproved, loadCandidates } from "@/server/autoquiz/service";
 import { finalizeAttempt } from "@/server/game/engine";
 import { getQuizStatus } from "@/server/quiz/status";
 import { percentile, summarizeResults } from "@/server/player/tournament-summary";
@@ -292,6 +292,18 @@ function pickForTournament(pools: CategoryPool[], n: number, source: QuestionSou
   return { picks: [...old.picks, ...rest.picks], missing: rest.missing };
 }
 
+/**
+ * Como `pickForTournament`, pero si el banco "disponible" no alcanza completa con `fallback` (cualquier
+ * aprobada fuera de cuestionarios abiertos o por abrir): un partido nunca se arma vacío.
+ */
+function pickOrFallback(pools: CategoryPool[], fallback: CategoryPool[], n: number, source: QuestionSource, allowReuse: boolean) {
+  const r = pickForTournament(pools, n, source, allowReuse);
+  if (!r.missing) return { ...r, fallback: 0 };
+  const taken = new Set(r.picks.map((p) => p.id));
+  const extra = pickAcrossCategories(withoutIds(fallback, taken), r.missing, { allowReuse: true });
+  return { picks: [...r.picks, ...extra.picks], missing: extra.missing, fallback: extra.picks.length };
+}
+
 function withoutIds(pools: CategoryPool[], ids: Set<string>): CategoryPool[] {
   return pools.map((p) => ({ fresh: p.fresh.filter((c) => !ids.has(c.id)), reusable: p.reusable.filter((c) => !ids.has(c.id)) }));
 }
@@ -300,7 +312,9 @@ function withoutIds(pools: CategoryPool[], ids: Set<string>): CategoryPool[] {
  * Arma (y publica) el cuestionario de cada partido que ya tiene a sus dos jugadores. Cada partido lleva
  * `uniqueQuestions` preguntas propias y el resto sorteadas (en otro orden) de un pozo común de su ronda,
  * así difieren entre partidos sin gastar tanto banco. Nunca repite preguntas de rondas anteriores del
- * torneo. El origen (nuevas o reutilizadas primero) es `questionSource`. Avisa al staff si no alcanzan.
+ * torneo. El origen (nuevas o reutilizadas primero) es `questionSource`; si no alcanzan, se usan aprobadas
+ * usadas hace menos tiempo (y se avisa al staff). También completa los partidos que quedaron cortos y
+ * nadie empezó.
  */
 export async function ensureMatchQuizzes(tournamentId: string, now = new Date(), db: Db = prisma) {
   const t = await db.tournament.findUniqueOrThrow({ where: { id: tournamentId }, include: { categories: { select: { categoryId: true } } } });
@@ -309,31 +323,69 @@ export async function ensureMatchQuizzes(tournamentId: string, now = new Date(),
     include: { playerA: { select: { username: true, name: true } }, playerB: { select: { username: true, name: true } } },
     orderBy: [{ round: "asc" }, { position: "asc" }],
   });
-  if (!pending.length) return 0;
+  const started = await db.knockoutMatch.findMany({
+    where: { tournamentId, winnerId: null, quizId: { not: null }, quiz: { closesAt: { gt: now }, attempts: { none: {} } } },
+    select: { quiz: { select: { id: true, _count: { select: { questions: true } } } } },
+  });
+  const toTopUp = started.map((m) => m.quiz!).filter((q) => q._count.questions < t.questionsPerQuiz);
+  if (!pending.length && !toTopUp.length) return 0;
   const s = await getSettings(db);
   const allowReuse = t.questionSource === "REUSED_FIRST" || s["autoquiz.allowReuse"];
-  const candidates = await Promise.all(t.categories.map((c) => loadCandidates(c.categoryId, { ...s, "autoquiz.allowReuse": allowReuse }, now, db)));
+  const candidates: CategoryPool[] = [];
+  const fallbackRaw: CategoryPool[] = [];
+  for (const c of t.categories) {
+    candidates.push(await loadCandidates(c.categoryId, { ...s, "autoquiz.allowReuse": allowReuse }, now, db));
+    fallbackRaw.push({ fresh: [], reusable: await loadAnyApproved(c.categoryId, now, db) });
+  }
   // Lo que ya salió en el torneo no se repite, y los pozos de cada ronda tampoco se usan como exclusivas.
   const used = await db.quizQuestion.findMany({ where: { quiz: { tournamentId } }, select: { questionId: true } });
-  const roundPools = { ...((t.knockoutPools ?? {}) as Record<string, string[]>) };
-  let pools = withoutIds(candidates, new Set([...used.map((u) => u.questionId), ...Object.values(roundPools).flat()]));
-  const { exclusive, shared, poolSize } = matchQuestionSplit(t.questionsPerQuiz, t.uniqueQuestions);
+  const roundPools: Record<string, string[]> = {};
+  for (const [round, ids] of Object.entries((t.knockoutPools ?? {}) as Record<string, string[]>)) if (ids.length) roundPools[round] = ids;
+  const exclude = new Set([...used.map((u) => u.questionId), ...Object.values(roundPools).flat()]);
+  let pools = withoutIds(candidates, exclude);
+  let fallback = withoutIds(fallbackRaw, exclude);
+  const take = (ids: Iterable<string>) => {
+    const set = new Set(ids);
+    pools = withoutIds(pools, set);
+    fallback = withoutIds(fallback, set);
+  };
+  const { shared, poolSize } = matchQuestionSplit(t.questionsPerQuiz, t.uniqueQuestions);
   // Para marcar `reused` en las del pozo (que se sortean en varias corridas).
-  const reusedIds = new Set(candidates.flatMap((c) => c.reusable.map((r) => r.id)));
+  const reusedIds = new Set([...candidates, ...fallbackRaw].flatMap((c) => c.reusable.map((r) => r.id)));
+  const rng = () => randomInt(1 << 30) / (1 << 30);
   let created = 0;
   let short = 0;
+  let recent = 0;
+
+  // Partidos ya armados que quedaron cortos (banco vacío en su momento) y nadie empezó: se completan.
+  for (const q of toTopUp) {
+    const r = pickOrFallback(pools, fallback, t.questionsPerQuiz - q._count.questions, t.questionSource, allowReuse);
+    take(r.picks.map((p) => p.id));
+    recent += r.fallback;
+    if (r.missing) short++;
+    if (!r.picks.length) continue;
+    await db.quizQuestion.createMany({
+      data: r.picks.map((p, i) => ({ quizId: q.id, questionId: p.id, position: q._count.questions + i, reused: p.reused })),
+    });
+  }
+
   for (const m of pending) {
     let pool = roundPools[m.round] ?? [];
     if (poolSize && !pool.length) {
-      const r = pickForTournament(pools, poolSize, t.questionSource, allowReuse);
+      const r = pickOrFallback(pools, fallback, poolSize, t.questionSource, allowReuse);
       pool = r.picks.map((p) => p.id);
-      roundPools[m.round] = pool;
-      pools = withoutIds(pools, new Set(pool));
-      await db.tournament.update({ where: { id: tournamentId }, data: { knockoutPools: roundPools } });
+      recent += r.fallback;
+      take(pool);
+      if (pool.length) {
+        roundPools[m.round] = pool;
+        await db.tournament.update({ where: { id: tournamentId }, data: { knockoutPools: roundPools } });
+      }
     }
-    const own = pickForTournament(pools, exclusive, t.questionSource, allowReuse);
-    pools = withoutIds(pools, new Set(own.picks.map((p) => p.id)));
-    const fromPool = sample(pool, shared, () => randomInt(1 << 30) / (1 << 30));
+    const fromPool = sample(pool, shared, rng);
+    // Si el pozo quedó corto, las propias cubren la diferencia.
+    const own = pickOrFallback(pools, fallback, t.questionsPerQuiz - fromPool.length, t.questionSource, allowReuse);
+    take(own.picks.map((p) => p.id));
+    recent += own.fallback;
     const picks: Pick[] = [...own.picks, ...fromPool.map((id) => ({ id, reused: reusedIds.has(id) }))];
     if (picks.length < t.questionsPerQuiz) short++;
     const who = (u: { username: string | null; name: string } | null) => (u?.username ? `@${u.username}` : (u?.name ?? "?"));
@@ -358,15 +410,17 @@ export async function ensureMatchQuizzes(tournamentId: string, now = new Date(),
       created++;
     });
   }
-  if (short)
+  if (short || recent)
     await notifyStaff(
       {
-        level: "CRITICAL",
+        level: short ? "CRITICAL" : "WARNING",
         kind: "tournament.bankShort",
-        title: `${t.name}: faltan preguntas para los partidos`,
-        body: `${short} partido(s) quedaron con menos de ${t.questionsPerQuiz} preguntas. Cargá preguntas en sus categorías.`,
+        title: short ? `${t.name}: faltan preguntas para los partidos` : `${t.name}: se reutilizaron preguntas recientes`,
+        body: short
+          ? `${short} partido(s) quedaron con menos de ${t.questionsPerQuiz} preguntas. Cargá preguntas en sus categorías: se completan solos mientras nadie haya empezado.`
+          : `No alcanzaban las preguntas nuevas ni las usadas hace más de ${s["autoquiz.reuseAfterDays"]} días: ${recent} salieron de cuestionarios recientes. Cargá preguntas en sus categorías.`,
         href: `/admin/torneos/${t.id}`,
-        dedupeKey: `tournament.bankShort:${t.id}:knockout:${pending[0].round}`,
+        dedupeKey: `tournament.bankShort:${t.id}:knockout:${pending[0]?.round ?? "top-up"}:${short ? "short" : "recent"}`,
       },
       now,
       db,

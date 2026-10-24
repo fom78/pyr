@@ -73,6 +73,14 @@ export function computeLeagueStandings(results: AttemptResult[], bestK: number):
   return assignRanks(rows);
 }
 
+/**
+ * Desglose de un jugador en la liga: sus resultados ordenados como los ordena la tabla,
+ * marcando los K que suman (la suma de los marcados es su total).
+ */
+export function leagueBreakdown<T extends RankableResult>(results: T[], bestK: number): (T & { counted: boolean })[] {
+  return [...results].sort(compareResults).map((r, i) => ({ ...r, counted: i < bestK }));
+}
+
 /** Torneo: suma de todos los cuestionarios (el puntaje ya incluye comodines). */
 export function computeTournamentStandings(results: AttemptResult[]): StandingRow[] {
   const rows: StandingRow[] = [];

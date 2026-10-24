@@ -7,6 +7,7 @@ import { authorize } from "@/server/auth/guard";
 import { joinCategory, leaveCategory } from "@/server/league/service";
 import { exchangeStarsForLife } from "@/server/inventory/service";
 import { startAttempt } from "@/server/game/engine";
+import { standingBreakdown } from "@/server/ranking/service";
 import { prisma } from "@/server/db";
 import { toFormState, type FormState } from "@/server/actions";
 
@@ -62,4 +63,16 @@ export async function completeOnboardingAction() {
   const user = await authorize("play").catch(() => null);
   if (user) await prisma.user.update({ where: { id: user.id }, data: { onboardedAt: new Date() } });
   redirect(user ? "/categorias" : "/");
+}
+
+/** Desglose de la tabla de liga: qué cuestionarios le suman a un jugador que figura en ella. */
+export async function standingBreakdownAction(categoryId: string, userId: string) {
+  await authorize("play");
+  const id = z.string().min(1).max(64);
+  const inTable = await prisma.categoryStanding.findUnique({
+    where: { categoryId_userId: { categoryId: id.parse(categoryId), userId: id.parse(userId) } },
+    select: { userId: true },
+  });
+  if (!inTable) return null;
+  return standingBreakdown(categoryId, userId);
 }

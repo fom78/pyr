@@ -14,6 +14,8 @@ import { tournamentTimeline } from "@/server/tournaments/timeline";
 import { BRACKET_SIZES, bracketQuestionNeed, roundsFor } from "@/server/tournaments/bracket";
 import { DEFAULT_TZ, formatDate, fromDateTimeInput } from "@/lib/format";
 import { saveTournamentAction } from "./actions";
+import { saveStageAction } from "../temporadas/actions";
+import { daysBetween, localDay, stageStart } from "@/server/seasons/plan";
 
 export type TournamentFormValues = {
   name: string;
@@ -46,8 +48,13 @@ export type TournamentFormValues = {
   thirdPlaceMatch: boolean;
   questionSource: "NEW_FIRST" | "REUSED_FIRST";
   uniqueQuestions: number | null;
-  qualifiers: { sourceTournamentId: string; topN: number }[];
+  qualifiers: { sourceTournamentId: string; fromRank: number; topN: number }[];
 };
+
+/** Etapa de una temporada: en vez de una fecha, "día N + hora" relativo al día 0 de cada instancia. */
+export type StageFormProps = { seasonId: string; stageId: string | null; offsetDays: number; startTime: string };
+
+const STAGE_DAY0 = "2030-01-07"; // día 0 de referencia para la vista previa de una etapa
 
 const SELECT = "border-input bg-background h-9 rounded-md border px-3 text-sm";
 
@@ -67,6 +74,7 @@ export function TournamentForm({
   formatLocked,
   sources = [],
   now,
+  stage,
 }: {
   id: string | null;
   initial: TournamentFormValues;
@@ -79,12 +87,16 @@ export function TournamentForm({
   sources?: { id: string; name: string }[];
   /** Instante de render (ISO), para la vista previa. */
   now: string;
+  /** Modo plantilla: etapa de una temporada. */
+  stage?: StageFormProps;
 }) {
-  const [state, action] = useActionState(saveTournamentAction.bind(null, id), null);
+  const [state, action] = useActionState(stage ? saveStageAction.bind(null, stage.seasonId, stage.stageId) : saveTournamentAction.bind(null, id), null);
   const fe = state?.fieldErrors;
   const v = state?.values;
   const num = (k: keyof TournamentFormValues) => String(v?.[k] ?? initial[k] ?? "");
   const [startsAt, setStartsAt] = useState(v?.startsAt ?? initial.startsAt);
+  const [offsetDays, setOffsetDays] = useState(String(v?.offsetDays ?? stage?.offsetDays ?? 0));
+  const [startTime, setStartTime] = useState(String(v?.startTime ?? stage?.startTime ?? "20:00"));
   const [quizCount, setQuizCount] = useState(num("quizCount"));
   const [freq, setFreq] = useState(num("frequencyHours"));
   const [active, setActive] = useState(num("quizActiveHours"));
@@ -100,7 +112,7 @@ export function TournamentForm({
 
   const preview = useMemo(() => {
     const t = {
-      startsAt: fromDateTimeInput(startsAt, DEFAULT_TZ),
+      startsAt: stage ? stageStart(STAGE_DAY0, { offsetDays: Number(offsetDays) || 0, startTime }) : fromDateTimeInput(startsAt, DEFAULT_TZ),
       quizCount: ko ? roundsFor(Number(maxP) || 2) : Number(quizCount),
       frequencyHours: Number(freq),
       quizActiveHours: ko ? Number(freq) : Number(active),
@@ -113,8 +125,10 @@ export function TournamentForm({
       [t.registrationLeadDays, t.lateEntryDays].every((n) => Number.isInteger(n) && n >= 0) &&
       t.quizCount <= 100;
     return ok ? tournamentTimeline(t, new Date(now)) : null;
-  }, [startsAt, quizCount, freq, active, lead, late, now, ko, maxP]);
-  const d = (x: Date) => formatDate(x, DEFAULT_TZ, "EEE d/M HH:mm");
+  }, [startsAt, quizCount, freq, active, lead, late, now, ko, maxP, stage, offsetDays, startTime]);
+  // En una etapa las fechas son relativas: "día 3, 20:00".
+  const d = (x: Date) =>
+    stage ? `día ${daysBetween(STAGE_DAY0, localDay(x))}, ${formatDate(x, DEFAULT_TZ, "HH:mm")}` : formatDate(x, DEFAULT_TZ, "EEE d/M HH:mm");
   const span = Number(active) / Number(freq);
 
   return (
@@ -126,8 +140,17 @@ export function TournamentForm({
           <CardTitle>Datos</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field label="Nombre" name="name" required defaultValue={v?.name ?? initial.name} errors={fe?.name} />
-          <Field label="Identificador (slug)" name="slug" defaultValue={v?.slug ?? initial.slug} errors={fe?.slug} hint="Vacío = se genera del nombre." />
+          <Field
+            label="Nombre"
+            name="name"
+            required
+            defaultValue={v?.name ?? initial.name}
+            errors={fe?.name}
+            hint={stage ? "Cada instancia lo llama «{nombre} · {temporada} #n»." : undefined}
+          />
+          {!stage && (
+            <Field label="Identificador (slug)" name="slug" defaultValue={v?.slug ?? initial.slug} errors={fe?.slug} hint="Vacío = se genera del nombre." />
+          )}
           <div className="grid gap-1.5 sm:col-span-2">
             <Label htmlFor="format">Formato</Label>
             {formatLocked && <input type="hidden" name="format" value={format} />}
@@ -164,17 +187,31 @@ export function TournamentForm({
         <CardHeader>
           <CardTitle>Calendario</CardTitle>
           <CardDescription>
-            Cargás cuándo empieza y el resto se calcula (hora de Buenos Aires).
+            {stage
+              ? "Día de inicio contado desde el día 0 de cada instancia (el día 0 lo elegís al lanzarla) y hora de Buenos Aires."
+              : "Cargás cuándo empieza y el resto se calcula (hora de Buenos Aires)."}
             {started && " El torneo ya empezó: los tiempos no se pueden cambiar."}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid content-start gap-1.5">
-              <Label htmlFor="startsAt">Empieza (primer cuestionario)</Label>
-              <Input readOnly={started} id="startsAt" name="startsAt" type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
-              <FieldErrors errors={fe?.startsAt} />
-            </div>
+            {stage ? (
+              <div className="grid content-start gap-1.5">
+                <Label htmlFor="offsetDays">Empieza el día (desde el día 0) y a las</Label>
+                <div className="flex gap-2">
+                  <Input id="offsetDays" name="offsetDays" type="number" min={0} max={730} required value={offsetDays} onChange={(e) => setOffsetDays(e.target.value)} className="w-24" />
+                  <Input id="startTime" name="startTime" type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} className="w-32" />
+                </div>
+                <FieldErrors errors={fe?.offsetDays} />
+                <FieldErrors errors={fe?.startTime} />
+              </div>
+            ) : (
+              <div className="grid content-start gap-1.5">
+                <Label htmlFor="startsAt">Empieza (primer cuestionario)</Label>
+                <Input readOnly={started} id="startsAt" name="startsAt" type="datetime-local" required value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+                <FieldErrors errors={fe?.startsAt} />
+              </div>
+            )}
             <div className={ko ? "hidden" : "grid content-start gap-1.5"}>
               <Label htmlFor="quizCount">Cuestionarios</Label>
               <Input readOnly={started} id="quizCount" name="quizCount" type="number" min={1} max={100} required value={quizCount} onChange={(e) => setQuizCount(e.target.value)} />
@@ -283,7 +320,7 @@ export function TournamentForm({
                 de {maxP} lleno necesita hasta <strong>{need}</strong> preguntas.
               </p>
             </>
-          ) : (
+          ) : stage ? null : (
           <Field
             label="Repetir cada (días)"
             name="repeatEveryDays"
@@ -378,11 +415,16 @@ export function TournamentForm({
               <Switch id="thirdPlaceMatch" name="thirdPlaceMatch" defaultChecked={v ? v.thirdPlaceMatch === "on" : initial.thirdPlaceMatch} />
               <Label htmlFor="thirdPlaceMatch">Partido por el tercer puesto (entre los que pierden las semifinales)</Label>
             </div>
+            {stage ? (
+              <p className="text-muted-foreground text-sm">
+                Los clasificados a esta eliminatoria se cargan en las <strong>reglas de clasificación</strong> de la temporada.
+              </p>
+            ) : (
             <fieldset className="grid gap-2">
               <legend className="mb-1 text-sm font-medium">Clasificatorios</legend>
               <p className="text-muted-foreground text-xs">
-                Los primeros N de cada torneo entran gratis cuando ese torneo termina. Sus lugares quedan reservados mientras tanto; el resto del cupo es
-                inscripción abierta con costo.
+                Los puestos elegidos de cada torneo (ej. del 1 al 8, o del 9 al 16) entran gratis cuando ese torneo termina. Sus lugares quedan
+                reservados mientras tanto; el resto del cupo es inscripción abierta con costo.
               </p>
               {qualifiers.map((q, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-2">
@@ -399,7 +441,16 @@ export function TournamentForm({
                       </option>
                     ))}
                   </select>
-                  <span className="text-sm">primeros</span>
+                  <span className="text-sm">del puesto</span>
+                  <Input
+                    name="q.fromRank"
+                    type="number"
+                    min={1}
+                    className="w-20"
+                    value={q.fromRank}
+                    onChange={(e) => setQualifiers(qualifiers.map((x, j) => (j === i ? { ...x, fromRank: Number(e.target.value) } : x)))}
+                  />
+                  <span className="text-sm">al</span>
                   <Input
                     name="q.topN"
                     type="number"
@@ -419,13 +470,14 @@ export function TournamentForm({
                   variant="outline"
                   size="sm"
                   className="justify-self-start"
-                  onClick={() => setQualifiers([...qualifiers, { sourceTournamentId: "", topN: 4 }])}
+                  onClick={() => setQualifiers([...qualifiers, { sourceTournamentId: "", fromRank: 1, topN: 4 }])}
                 >
                   + Agregar clasificatorio
                 </Button>
               )}
               <FieldErrors errors={fe?.qualifiers} />
             </fieldset>
+            )}
             <div className="flex items-start gap-2">
               <Switch
                 id="autoConfirmQualified"
@@ -453,7 +505,7 @@ export function TournamentForm({
         </CardContent>
       </Card>
       <div>
-        <SubmitButton pendingText="Guardando…">{id ? "Guardar cambios" : "Crear torneo"}</SubmitButton>
+        <SubmitButton pendingText="Guardando…">{stage ? (stage.stageId ? "Guardar torneo" : "Agregar a la temporada") : id ? "Guardar cambios" : "Crear torneo"}</SubmitButton>
       </div>
     </form>
   );

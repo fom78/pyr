@@ -27,7 +27,7 @@ import {
   seedPlayers,
   type MatchSide,
 } from "./bracket";
-import { cancelTournament, finishTournament } from "./service";
+import { cancelTournament, finishTournament, isQualifiersOnly, qualifierSlots, refundEntry } from "./service";
 
 /**
  * Eliminatorias (formato KNOCKOUT). Ciclo:
@@ -46,84 +46,148 @@ const FINISHED = ["FINISHED", "TIMED_OUT"] as const;
 /** Cupo de la inscripción abierta: tope − inscriptos − lugares reservados a torneos de origen que no terminaron. */
 export async function knockoutCapacity(tournamentId: string, db: Db = prisma) {
   // En serie: puede correr dentro de una transacción (no admite consultas en paralelo).
-  const t = await db.tournament.findUniqueOrThrow({ where: { id: tournamentId }, select: { maxParticipants: true } });
+  const t = await db.tournament.findUniqueOrThrow({
+    where: { id: tournamentId },
+    select: { format: true, maxParticipants: true, qualifiers: { select: { fromRank: true, topN: true } } },
+  });
   const entries = await db.tournamentEntry.count({ where: { tournamentId } });
-  const pending = await db.tournamentQualifier.aggregate({
+  const pending = await db.tournamentQualifier.findMany({
     where: { tournamentId, appliedAt: null, source: { status: { in: ["DRAFT", "PUBLISHED"] } } },
-    _sum: { topN: true },
+    select: { fromRank: true, topN: true },
   });
   const max = t.maxParticipants ?? 0;
-  const reserved = pending._sum.topN ?? 0;
-  return { max, entries, reserved, open: Math.max(0, max - entries - reserved) };
+  const reserved = pending.reduce((a, q) => a + qualifierSlots(q), 0);
+  // Solo por clasificación: los lugares sin llenar no se abren al público (quedan como pases libres).
+  const qualifiersOnly = isQualifiersOnly(t);
+  return { max, entries, reserved, qualifiersOnly, open: qualifiersOnly ? 0 : Math.max(0, max - entries - reserved) };
 }
 
 /**
- * Al terminar un torneo: inscribe a sus primeros N en las eliminatorias que lo tienen como clasificatorio.
- * Se saltean los baneados y los que ya están inscriptos (si su puesto acá es mejor, se les anota para la
- * siembra): ese lugar pasa al siguiente de la tabla. Con `autoConfirmQualified` quedan confirmados.
+ * Al terminar un torneo: llena los cupos de las eliminatorias que lo tienen como clasificatorio
+ * (`fillQualifier` por regla) y marca las reglas como aplicadas.
  */
 export async function applyQualifiers(sourceId: string, now = new Date(), db: Db = prisma) {
-  const qualifiers = await db.tournamentQualifier.findMany({
-    where: { sourceTournamentId: sourceId, appliedAt: null },
-    include: { tournament: true, source: { select: { name: true } } },
-  });
+  const qualifiers = await db.tournamentQualifier.findMany({ where: { sourceTournamentId: sourceId, appliedAt: null }, select: { id: true } });
   let added = 0;
   for (const q of qualifiers) {
-    const t = q.tournament;
-    if (t.status !== "PUBLISHED" && t.status !== "DRAFT") continue;
-    if (t.registrationEndsAt <= now) {
-      await db.tournamentQualifier.update({ where: { id: q.id }, data: { appliedAt: now } });
-      continue;
-    }
-    const results = await db.tournamentResult.findMany({
-      where: { tournamentId: sourceId, user: { bans: { none: activeBanWhere(now) } } },
-      orderBy: [{ rank: "asc" }, { points: "desc" }],
-    });
-    const fresh: string[] = [];
-    await db.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Tournament" WHERE id = ${t.id} FOR UPDATE`;
-      let entries = await tx.tournamentEntry.count({ where: { tournamentId: t.id } });
-      for (const r of results) {
-        if (fresh.length >= q.topN || (t.maxParticipants && entries >= t.maxParticipants)) break;
-        const existing = await tx.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: r.userId } } });
-        if (existing) {
-          if (existing.qualifiedRank == null || existing.qualifiedRank > r.rank)
-            await tx.tournamentEntry.update({ where: { id: existing.id }, data: { qualifiedFromId: sourceId, qualifiedRank: r.rank } });
-          continue;
-        }
-        await tx.tournamentEntry.create({
-          data: {
-            tournamentId: t.id,
-            userId: r.userId,
-            enrolledAt: now,
-            qualifiedFromId: sourceId,
-            qualifiedRank: r.rank,
-            confirmedAt: t.autoConfirmQualified ? now : null,
-          },
-        });
-        fresh.push(r.userId);
-        entries++;
-      }
-      await tx.tournamentQualifier.update({ where: { id: q.id }, data: { appliedAt: now } });
-    });
-    added += fresh.length;
-    if (fresh.length)
-      await notifyUsers(
-        fresh,
-        {
-          level: "INFO",
-          kind: "knockout.qualified",
-          title: `🎟️ Clasificaste a ${t.name}`,
-          body: t.autoConfirmQualified
-            ? `Por tu puesto en ${q.source.name} ya tenés tu lugar (gratis). Empieza el ${formatDateTime(t.startsAt)}.`
-            : `Por tu puesto en ${q.source.name} tenés un lugar gratis: confirmalo antes del ${formatDateTime(t.registrationEndsAt)}.`,
-          href: `/torneos/${t.slug}`,
-          dedupeKey: `knockout.qualified:${t.id}`,
-        },
-        db,
-      );
+    added += await fillQualifier(q.id, now, db);
+    await db.tournamentQualifier.update({ where: { id: q.id }, data: { appliedAt: now } });
   }
   return added;
+}
+
+type TierTournament = { id: string; name: string; slug: string; entryCost: number; registrationEndsAt: Date; status: string };
+
+/** Eliminatorias de la misma instancia de temporada, de mejor y de peor nivel que `t` (por `SeasonStage.position`). */
+async function tierNeighbours(t: { id: string; seasonRunId: string | null; seasonStageId: string | null }, db: Db) {
+  if (!t.seasonRunId || !t.seasonStageId) return { better: [] as TierTournament[], worse: [] as TierTournament[] };
+  const stage = await db.seasonStage.findUnique({ where: { id: t.seasonStageId }, select: { position: true } });
+  const others = await db.tournament.findMany({
+    where: { seasonRunId: t.seasonRunId, format: "KNOCKOUT", NOT: { id: t.id }, seasonStage: { isNot: null } },
+    select: { id: true, name: true, slug: true, entryCost: true, registrationEndsAt: true, status: true, seasonStage: { select: { position: true } } },
+  });
+  const pos = stage?.position ?? 0;
+  return {
+    better: others.filter((o) => o.seasonStage!.position < pos),
+    worse: others.filter((o) => o.seasonStage!.position > pos),
+  };
+}
+
+/**
+ * Llena los cupos libres de una regla de clasificación (idempotente: se puede volver a llamar). Recorre la
+ * tabla final del origen desde `fromRank` y saltea a los baneados, a los ya inscriptos y a los que ya están
+ * en una eliminatoria de mejor nivel de la misma temporada: ese lugar pasa al siguiente. Si un clasificado
+ * estaba en una de peor nivel, sale de ahí (con reintegro si había pagado) y esa se vuelve a llenar.
+ * Con `autoConfirmQualified` quedan confirmados.
+ */
+export async function fillQualifier(qualifierId: string, now = new Date(), db: Db = prisma): Promise<number> {
+  const q = await db.tournamentQualifier.findUnique({
+    where: { id: qualifierId },
+    include: { tournament: true, source: { select: { name: true, status: true } } },
+  });
+  if (!q || q.source.status !== "FINISHED") return 0;
+  const t = q.tournament;
+  if ((t.status !== "PUBLISHED" && t.status !== "DRAFT") || t.registrationEndsAt <= now) return 0;
+  const { better, worse } = await tierNeighbours(t, db);
+  const inBetter = new Set(
+    better.length ? (await db.tournamentEntry.findMany({ where: { tournamentId: { in: better.map((b) => b.id) } }, select: { userId: true } })).map((e) => e.userId) : [],
+  );
+  const results = await db.tournamentResult.findMany({
+    where: { tournamentId: q.sourceTournamentId, rank: { gte: q.fromRank }, user: { bans: { none: activeBanWhere(now) } } },
+    orderBy: [{ rank: "asc" }, { points: "desc" }],
+  });
+  const fresh: string[] = [];
+  await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Tournament" WHERE id = ${t.id} FOR UPDATE`;
+    let free = qualifierSlots(q) - (await tx.tournamentEntry.count({ where: { tournamentId: t.id, qualifierId: q.id } }));
+    let entries = await tx.tournamentEntry.count({ where: { tournamentId: t.id } });
+    for (const r of results) {
+      if (free <= 0 || (t.maxParticipants && entries >= t.maxParticipants)) break;
+      if (inBetter.has(r.userId)) continue;
+      const existing = await tx.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: r.userId } } });
+      if (existing) {
+        if (existing.qualifiedRank == null || existing.qualifiedRank > r.rank)
+          await tx.tournamentEntry.update({ where: { id: existing.id }, data: { qualifiedFromId: q.sourceTournamentId, qualifiedRank: r.rank } });
+        continue;
+      }
+      await tx.tournamentEntry.create({
+        data: {
+          tournamentId: t.id,
+          userId: r.userId,
+          enrolledAt: now,
+          qualifiedFromId: q.sourceTournamentId,
+          qualifiedRank: r.rank,
+          qualifierId: q.id,
+          confirmedAt: t.autoConfirmQualified ? now : null,
+        },
+      });
+      fresh.push(r.userId);
+      free--;
+      entries++;
+    }
+  });
+  if (fresh.length)
+    await notifyUsers(
+      fresh,
+      {
+        level: "INFO",
+        kind: "knockout.qualified",
+        title: `🎟️ Clasificaste a ${t.name}`,
+        body: t.autoConfirmQualified
+          ? `Por tu puesto en ${q.source.name} ya tenés tu lugar (gratis). Empieza el ${formatDateTime(t.startsAt)}.`
+          : `Por tu puesto en ${q.source.name} tenés un lugar gratis: confirmalo antes del ${formatDateTime(t.registrationEndsAt)}.`,
+        href: `/torneos/${t.slug}`,
+        dedupeKey: `knockout.qualified:${t.id}`,
+      },
+      db,
+    );
+
+  // Ascenso: los que acaban de entrar dejan las eliminatorias de peor nivel (que se vuelven a llenar).
+  for (const w of worse) {
+    if (w.status !== "PUBLISHED" && w.status !== "DRAFT") continue;
+    if (w.registrationEndsAt <= now) continue;
+    const moved = await db.tournamentEntry.findMany({ where: { tournamentId: w.id, userId: { in: fresh } } });
+    if (!moved.length) continue;
+    for (const e of moved) {
+      await refundEntry(w, e, `Reembolso: pasaste a ${t.name}`, { id: null }, db);
+      await db.tournamentEntry.delete({ where: { id: e.id } });
+    }
+    await notifyUsers(
+      moved.map((e) => e.userId),
+      {
+        level: "INFO",
+        kind: "knockout.promoted",
+        title: `⬆️ Pasaste a ${t.name}`,
+        body: `Clasificaste a una eliminatoria de mejor nivel, así que dejaste tu lugar en ${w.name}${w.entryCost > 0 ? " (si habías pagado, se te devolvió)" : ""}.`,
+        href: `/torneos/${t.slug}`,
+        dedupeKey: `knockout.promoted:${t.id}`,
+      },
+      db,
+    );
+    const rules = await db.tournamentQualifier.findMany({ where: { tournamentId: w.id, appliedAt: { not: null } }, select: { id: true } });
+    for (const r of rules) await fillQualifier(r.id, now, db);
+  }
+  return fresh.length;
 }
 
 /** El clasificado confirma su lugar (gratis). */

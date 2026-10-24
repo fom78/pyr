@@ -29,7 +29,7 @@ export default async function CategoryStandingsPage({ params }: { params: Promis
       {standings.length === 0 ? (
         <EmptyState title="La tabla todavía está vacía" description="Se llena apenas alguien termina un cuestionario." />
       ) : (
-        <StandingsTable rows={standings} meId={user.id} me={myStanding} countedLabel={`Mejores ${bestK}`} />
+        <StandingsTable rows={standings} meId={user.id} me={myStanding} countedLabel={`Mejores ${bestK}`}  breakdown={{ categoryId: category.id, tz: user.timezone }} />
       )}
     </>
   );

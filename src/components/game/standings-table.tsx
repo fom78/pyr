@@ -4,6 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { HelpTip } from "@/components/common";
 import { formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { StandingBreakdown } from "./standing-breakdown";
 
 export type StandingRowView = {
   userId: string;
@@ -19,7 +20,7 @@ export function PlayerName({ name, username }: { name: string; username: string 
   const body = (
     <>
       <span className="block max-w-[40vw] truncate sm:max-w-none">{name}</span>
-      {username && <span className="text-xs text-muted-foreground">@{username}</span>}
+      {username && <span className="text-muted-foreground text-xs">@{username}</span>}
     </>
   );
   if (!username) return body;
@@ -35,24 +36,24 @@ function Trend({ rank, previous }: { rank: number; previous: number | null }) {
   if (previous === null)
     return (
       <span title="Sin cambios desde que entró a la tabla">
-        <Minus className="size-3.5 text-muted-foreground" aria-label="Sin cambios desde que entró a la tabla" />
+        <Minus className="text-muted-foreground size-3.5" aria-label="Sin cambios desde que entró a la tabla" />
       </span>
     );
   if (previous > rank)
     return (
-      <span className="inline-flex items-center text-xs text-success" aria-label={`Subió ${previous - rank}`}>
+      <span className="text-success inline-flex items-center text-xs" aria-label={`Subió ${previous - rank}`}>
         <ArrowUp className="size-3.5" />
         {previous - rank}
       </span>
     );
   if (previous < rank)
     return (
-      <span className="inline-flex items-center text-xs text-destructive" aria-label={`Bajó ${rank - previous}`}>
+      <span className="text-destructive inline-flex items-center text-xs" aria-label={`Bajó ${rank - previous}`}>
         <ArrowDown className="size-3.5" />
         {rank - previous}
       </span>
     );
-  return <Minus className="size-3.5 text-muted-foreground" aria-label="Sin cambios" />;
+  return <Minus className="text-muted-foreground size-3.5" aria-label="Sin cambios" />;
 }
 
 export function StandingsTable({
@@ -61,6 +62,7 @@ export function StandingsTable({
   me,
   countedLabel,
   countedHelp,
+  breakdown,
 }: {
   rows: StandingRowView[];
   meId: string;
@@ -68,18 +70,26 @@ export function StandingsTable({
   me?: StandingRowView | null;
   countedLabel: string;
   countedHelp?: React.ReactNode;
+  /** Liga: tocar los puntos o la cantidad muestra qué cuestionarios suman. */
+  breakdown?: { categoryId: string; tz?: string };
 }) {
   const showMeBelow = me && !rows.some((r) => r.userId === me.userId);
+  const detail = (r: StandingRowView, value: React.ReactNode) =>
+    breakdown ? (
+      <StandingBreakdown categoryId={breakdown.categoryId} userId={r.userId} name={r.user.name} tz={breakdown.tz}>
+        {value}
+      </StandingBreakdown>
+    ) : (
+      value
+    );
   const render = (r: StandingRowView) => (
     <TableRow key={r.userId} className={cn(r.userId === meId && "bg-primary/10 font-medium")}>
-      <TableCell className="w-12 text-center tabular-nums">
-        {r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : r.rank}
-      </TableCell>
+      <TableCell className="w-12 text-center tabular-nums">{r.rank <= 3 ? ["🥇", "🥈", "🥉"][r.rank - 1] : r.rank}</TableCell>
       <TableCell>
         <PlayerName name={r.user.name} username={r.user.username} />
       </TableCell>
-      <TableCell className="text-right font-semibold tabular-nums">{formatNumber(r.points)}</TableCell>
-      <TableCell className="hidden text-right tabular-nums sm:table-cell">{r.quizzesCounted}</TableCell>
+      <TableCell className="text-right font-semibold tabular-nums">{detail(r, formatNumber(r.points))}</TableCell>
+      <TableCell className="hidden text-right tabular-nums sm:table-cell">{detail(r, r.quizzesCounted)}</TableCell>
       <TableCell className="w-12 text-center">
         <Trend rank={r.rank} previous={r.previousRank} />
       </TableCell>
@@ -106,7 +116,7 @@ export function StandingsTable({
           {showMeBelow && (
             <>
               <TableRow>
-                <TableCell colSpan={5} className="py-1 text-center text-muted-foreground">
+                <TableCell colSpan={5} className="text-muted-foreground py-1 text-center">
                   ⋯
                 </TableCell>
               </TableRow>

@@ -8,6 +8,7 @@ import { purgeRateBuckets } from "@/server/ratelimit";
 import { finishDueTournaments } from "@/server/tournaments/service";
 import { fillTournamentDrafts, generateTournamentDrafts, notifyTournamentBank } from "@/server/tournaments/auto";
 import { createNextEditions, notifySeriesRegistration } from "@/server/tournaments/series";
+import { runSeasons } from "@/server/seasons/service";
 import { runKnockouts } from "@/server/tournaments/knockout";
 import { notifyReviewReady } from "@/server/quiz/review-notify";
 import { notifyQuizOpened, notifyStreakRisk, sendWeeklySummaries } from "@/server/notifications/player";
@@ -101,6 +102,8 @@ export const tasks = {
     cron: "5 * * * *",
     run: async () => ({ ...(await createNextEditions()), ...(await notifySeriesRegistration()) }),
   },
+  // Temporadas: cierra las instancias terminadas y lanza la siguiente de las que se repiten.
+  seasons: { cron: "10 * * * *", run: () => runSeasons() },
   // Recálculo completo diario: la ventana del ranking se desliza aunque no haya eventos.
   "standings-nightly": { cron: "15 3 * * *", run: () => recomputeAllStandings() },
   "ratelimit-purge": { cron: "0 * * * *", run: () => purgeRateBuckets() },

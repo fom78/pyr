@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/session";
@@ -18,6 +19,7 @@ import { StandingsTable } from "@/components/game/standings-table";
 import { formatDateTime, formatHours, formatNumber } from "@/lib/format";
 import { parsePrizes, prizeText } from "@/server/tournaments/prizes";
 import { EnrollButton } from "./enroll-button";
+import { seasonContext } from "@/server/seasons/service";
 import { ConfirmQualificationButton } from "./confirm-button";
 import { Bracket } from "@/components/game/bracket";
 import { getBracket, knockoutCapacity } from "@/server/tournaments/knockout";
@@ -43,8 +45,15 @@ export default async function TournamentPage({
     include: {
       categories: { include: { category: true } },
       wildcards: true,
-      quizzes: { where: { publishedAt: { not: null } }, include: { _count: { select: { questions: { where: { voided: false } } } } } },
-      standings: { orderBy: [{ rank: "asc" }, { userId: "asc" }], take: 100, include: { user: { select: { name: true, username: true } } } },
+      quizzes: {
+        where: { publishedAt: { not: null } },
+        include: { _count: { select: { questions: { where: { voided: false } } } } },
+      },
+      standings: {
+        orderBy: [{ rank: "asc" }, { userId: "asc" }],
+        take: 100,
+        include: { user: { select: { name: true, username: true } } },
+      },
       _count: { select: { entries: true } },
     },
   });
@@ -52,13 +61,14 @@ export default async function TournamentPage({
   const now = new Date();
   const tz = user.timezone;
   const ko = t.format === "KNOCKOUT";
-  const [entry, balance, attempts, result, bracket, capacity] = await Promise.all([
+  const [entry, balance, attempts, result, bracket, capacity, season] = await Promise.all([
     prisma.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
     getBalance(user.id),
     prisma.attempt.findMany({ where: { userId: user.id, quizId: { in: t.quizzes.map((q) => q.id) } } }),
     prisma.tournamentResult.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
     ko ? getBracket(t.id) : null,
     ko ? knockoutCapacity(t.id) : null,
+    seasonContext(t),
   ]);
   const wildcardsLeft = entry ? await remainingWildcards(t.id, user.id) : [];
   const reg = registrationState(t, now);
@@ -66,11 +76,20 @@ export default async function TournamentPage({
   const prizes = parsePrizes(t.prizes);
   const full = capacity ? capacity.open <= 0 : Boolean(t.maxParticipants && t._count.entries >= t.maxParticipants);
   // Eliminatoria: solo se listan los partidos propios.
-  const myQuizIds = new Set(bracket?.matches.filter((m) => m.quizId && (m.a?.id === user.id || m.b?.id === user.id)).map((m) => m.quizId));
+  const myQuizIds = new Set(
+    bracket?.matches.filter((m) => m.quizId && (m.a?.id === user.id || m.b?.id === user.id)).map((m) => m.quizId),
+  );
   const quizzes = t.quizzes
     .filter((q) => !ko || myQuizIds.has(q.id))
-    .map((q) => ({ ...q, derived: getQuizStatus(q, now), questionCount: q._count.questions, attempt: attempts.find((a) => a.quizId === q.id) ?? null }))
-    .sort((a, b) => STATUS_DISPLAY_ORDER[a.derived] - STATUS_DISPLAY_ORDER[b.derived] || a.opensAt.getTime() - b.opensAt.getTime());
+    .map((q) => ({
+      ...q,
+      derived: getQuizStatus(q, now),
+      questionCount: q._count.questions,
+      attempt: attempts.find((a) => a.quizId === q.id) ?? null,
+    }))
+    .sort(
+      (a, b) => STATUS_DISPLAY_ORDER[a.derived] - STATUS_DISPLAY_ORDER[b.derived] || a.opensAt.getTime() - b.opensAt.getTime(),
+    );
   const me = t.standings.find((s) => s.userId === user.id);
   const img = fileUrl(t.imageKey);
 
@@ -88,22 +107,26 @@ export default async function TournamentPage({
         <>
           <li>
             <strong>Eliminatoria</strong> de hasta {capacity.max} jugadores
-            {capacity.reserved > 0 && ` (${capacity.reserved} lugares reservados para clasificados de otros torneos)`}. Si se anotan menos, el cuadro se
-            achica y los que faltan son pases libres para los mejores sembrados.
+            {capacity.qualifiersOnly
+              ? ". Se entra solo por clasificación desde otros torneos"
+              : capacity.reserved > 0 && ` (${capacity.reserved} lugares reservados para clasificados de otros torneos)`}
+            . Si {capacity.qualifiersOnly ? "clasifican" : "se anotan"} menos, el cuadro se achica y los que faltan son pases
+            libres para los mejores sembrados.
           </li>
           <li>
-            Un partido por ronda contra un rival, con un cuestionario igual para los dos (mezclado). Cada ronda dura {formatHours(t.frequencyHours)}.
+            Un partido por ronda contra un rival, con un cuestionario igual para los dos (mezclado). Cada ronda dura{" "}
+            {formatHours(t.frequencyHours)}.
           </li>
           <li>
-            Gana quien hace más puntos; si empatan, más aciertos, después menos tiempo y por último el mejor sembrado. Quien no juega a tiempo
-            pierde por W.O. El resultado se conoce cuando jugaron los dos.
+            Gana quien hace más puntos; si empatan, más aciertos, después menos tiempo y por último el mejor sembrado. Quien no
+            juega a tiempo pierde por W.O. El resultado se conoce cuando jugaron los dos.
           </li>
           {t.thirdPlaceMatch && <li>Los que pierden las semifinales juegan por el tercer puesto.</li>}
         </>
       ) : (
         <li>
-          {t.quizCount} cuestionarios, {t.frequencyHours === 24 ? "uno por día" : `uno cada ${formatHours(t.frequencyHours)}`}; cada uno queda abierto{" "}
-          {formatHours(t.quizActiveHours)}. Suman <strong>todos</strong>.
+          {t.quizCount} cuestionarios, {t.frequencyHours === 24 ? "uno por día" : `uno cada ${formatHours(t.frequencyHours)}`};
+          cada uno queda abierto {formatHours(t.quizActiveHours)}. Suman <strong>todos</strong>.
         </li>
       )}
       <li>
@@ -122,6 +145,15 @@ export default async function TournamentPage({
           {ko ? "Los que caen en la misma ronda cobran lo mismo." : "Los empates cobran el premio del puesto."}
         </li>
       )}
+      {season && season.feeds.length > 0 && (
+        <li>
+          Clasificación:{" "}
+          {season.feeds
+            .map((f) => `${f.fromRank > 1 ? `puestos ${f.fromRank} a ${f.toRank}` : `los primeros ${f.toRank}`} → ${f.name}`)
+            .join(" · ")}
+          {season.feeds.length > 1 && " (si clasificás a dos, vas a la de mejor nivel)"}. Entran gratis al terminar este torneo.
+        </li>
+      )}
       <li>Si el torneo se cancela, se devuelve la inscripción.</li>
     </ul>
   );
@@ -138,7 +170,9 @@ export default async function TournamentPage({
           ) : entry ? (
             <Badge className="h-8 px-3">✓ Inscripto</Badge>
           ) : t.status === "PUBLISHED" && reg === "OPEN" && !user.banned ? (
-            full ? (
+            capacity?.qualifiersOnly ? (
+              <Badge variant="secondary">Por clasificación</Badge>
+            ) : full ? (
               <Badge variant="secondary">Cupo completo</Badge>
             ) : (
               <EnrollButton tournamentId={t.id} name={t.name} cost={t.entryCost} balance={balance} rules={rules} />
@@ -150,15 +184,35 @@ export default async function TournamentPage({
         // eslint-disable-next-line @next/next/no-img-element
         <img src={img} alt="" className="mb-6 aspect-[3/1] w-full rounded-lg object-cover" />
       )}
-      {t.description && <p className="mb-6 text-pretty text-muted-foreground">{t.description}</p>}
+      {season?.slug && (
+        <p className="mb-4 text-sm">
+          <Link href={`/temporadas/${season.slug}`} className="text-primary underline-offset-2 hover:underline">
+            📅 Parte de {season.name} #{season.number}
+          </Link>
+          {season.feeds.length > 0 && (
+            <span className="text-muted-foreground">
+              {" "}
+              ·{" "}
+              {season.feeds
+                .map((f) => `${f.fromRank > 1 ? `${f.fromRank}°–${f.toRank}°` : `top ${f.toRank}`} → ${f.name}`)
+                .join(" · ")}
+            </span>
+          )}
+        </p>
+      )}
+      {t.description && <p className="text-muted-foreground mb-6 text-pretty">{t.description}</p>}
       {t.status === "FINISHED" &&
         (result ? (
           <p className="bg-muted mb-6 rounded-md p-3 text-sm">
             <strong>
-              {result.rank <= 3 ? `${["🥇", "🥈", "🥉"][result.rank - 1]} ` : ""}Terminaste #{result.rank} de {result.participants}
+              {result.rank <= 3 ? `${["🥇", "🥈", "🥉"][result.rank - 1]} ` : ""}Terminaste #{result.rank} de{" "}
+              {result.participants}
             </strong>{" "}
             con {formatNumber(result.points)} puntos ({result.quizzesPlayed} de {result.quizzesTotal} cuestionarios)
-            {(result.prizeCredits > 0 || result.prizeStars > 0) && <> · ganaste {prizeText({ credits: result.prizeCredits, stars: result.prizeStars })}</>}.
+            {(result.prizeCredits > 0 || result.prizeStars > 0) && (
+              <> · ganaste {prizeText({ credits: result.prizeCredits, stars: result.prizeStars })}</>
+            )}
+            .
           </p>
         ) : (
           <p className="bg-muted mb-6 rounded-md p-3 text-sm">Este torneo finalizó. ¡Gracias por participar!</p>
@@ -168,29 +222,32 @@ export default async function TournamentPage({
           <Card>
             <CardContent className="py-3 text-center">
               <p className="text-2xl font-bold">#{me.rank}</p>
-              <p className="text-xs text-muted-foreground">posición</p>
+              <p className="text-muted-foreground text-xs">posición</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="py-3 text-center">
               <p className="text-2xl font-bold tabular-nums">{formatNumber(me.points)}</p>
-              <p className="text-xs text-muted-foreground">puntos</p>
+              <p className="text-muted-foreground text-xs">puntos</p>
             </CardContent>
           </Card>
           <Card className="col-span-2 sm:col-span-1">
             <CardContent className="py-3 text-center text-sm">
-              {wildcardsLeft.length ? wildcardsLeft.map((w) => `${wildcardStrategies[w.type].name}: ${w.remaining}`).join(" · ") : "Sin comodines"}
-              <p className="text-xs text-muted-foreground">comodines restantes</p>
+              {wildcardsLeft.length
+                ? wildcardsLeft.map((w) => `${wildcardStrategies[w.type].name}: ${w.remaining}`).join(" · ")
+                : "Sin comodines"}
+              <p className="text-muted-foreground text-xs">comodines restantes</p>
             </CardContent>
           </Card>
         </div>
       )}
       {entry?.qualifiedFromId && !entry.confirmedAt && (
         <p className="bg-warning/15 mb-6 rounded-md p-3 text-sm">
-          Clasificaste ({entry.qualifiedRank}° puesto): confirmá tu lugar antes del {formatDateTime(t.registrationEndsAt, tz)} o lo perdés.
+          Clasificaste ({entry.qualifiedRank}° puesto): confirmá tu lugar antes del {formatDateTime(t.registrationEndsAt, tz)} o
+          lo perdés.
         </p>
       )}
-      {ko && capacity && reg === "OPEN" && (
+      {ko && capacity && reg === "OPEN" && !capacity.qualifiersOnly && (
         <p className="text-muted-foreground mb-4 text-sm">
           {capacity.open} de {capacity.max} lugares abiertos
           {capacity.reserved > 0 && `, ${capacity.reserved} reservados para clasificados`} · {capacity.entries} inscriptos.
@@ -211,19 +268,32 @@ export default async function TournamentPage({
           ) : (
             quizzes.map((q) => <QuizCard key={q.id} q={q} canPlay={Boolean(entry) && !user.banned} tz={tz} />)
           )}
-          {!entry && quizzes.length > 0 && <p className="text-sm text-muted-foreground">Para jugar tenés que inscribirte en el torneo.</p>}
+          {!entry && quizzes.length > 0 && (
+            <p className="text-muted-foreground text-sm">Para jugar tenés que inscribirte en el torneo.</p>
+          )}
         </TabsContent>
         <TabsContent value="tabla">
           {ko ? (
             bracket?.matches.length ? (
               <Bracket bracket={bracket} meId={user.id} tz={tz} />
             ) : (
-              <EmptyState title="El cuadro todavía no está armado" description={`Se sortea al cerrar la inscripción (${formatDateTime(t.registrationEndsAt, tz)}).`} />
+              <EmptyState
+                title="El cuadro todavía no está armado"
+                description={`Se sortea al cerrar la inscripción (${formatDateTime(t.registrationEndsAt, tz)}).`}
+              />
             )
           ) : t.standings.length === 0 ? (
-            <EmptyState title="La tabla está vacía" description="Se actualiza a medida que los participantes terminan los cuestionarios." />
+            <EmptyState
+              title="La tabla está vacía"
+              description="Se actualiza a medida que los participantes terminan los cuestionarios."
+            />
           ) : (
-            <StandingsTable rows={t.standings} meId={user.id} countedLabel="Jugados" countedHelp="En torneo suman todos los cuestionarios jugados." />
+            <StandingsTable
+              rows={t.standings}
+              meId={user.id}
+              countedLabel="Jugados"
+              countedHelp="En torneo suman todos los cuestionarios jugados."
+            />
           )}
         </TabsContent>
         <TabsContent value="reglamento">

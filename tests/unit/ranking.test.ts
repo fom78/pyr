@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { computeLeagueStandings, computeTournamentStandings, positionOf, sliceAround, type AttemptResult } from "@/server/ranking/compute";
+import {
+  computeLeagueStandings,
+  computeTournamentStandings,
+  leagueBreakdown,
+  positionOf,
+  sliceAround,
+  type AttemptResult,
+} from "@/server/ranking/compute";
 
 const r = (userId: string, quizId: string, score: number, correctCount = 5, totalTimeMs = 10000): AttemptResult => ({
   userId,
@@ -46,7 +53,12 @@ describe("computeLeagueStandings", () => {
 
 describe("computeTournamentStandings", () => {
   it("suma todos los cuestionarios", () => {
-    const rows = computeTournamentStandings([r("ana", "q1", 100), r("ana", "q2", 200), r("ana", "q3", 300), r("beto", "q1", 500)]);
+    const rows = computeTournamentStandings([
+      r("ana", "q1", 100),
+      r("ana", "q2", 200),
+      r("ana", "q3", 300),
+      r("beto", "q1", 500),
+    ]);
     expect(rows[0]).toMatchObject({ userId: "ana", points: 600, quizzesCounted: 3, rank: 1 });
     expect(rows[1]).toMatchObject({ userId: "beto", points: 500, rank: 2 });
   });
@@ -66,5 +78,36 @@ describe("sliceAround / positionOf", () => {
     expect(positionOf(all[1], all)).toBe(2);
     expect(positionOf(all[2], all)).toBe(2);
     expect(positionOf(all[3], all)).toBe(4);
+  });
+});
+
+describe("leagueBreakdown", () => {
+  const r = (id: string, score: number, correctCount = 5, totalTimeMs = 1000) => ({
+    id,
+    score,
+    correctCount,
+    totalTimeMs,
+    finishedAt: new Date(0),
+  });
+
+  it("ordena como la tabla y marca los K que suman (el total coincide)", () => {
+    const rows = leagueBreakdown([r("a", 300), r("b", 900), r("c", 500), r("d", 500, 6), r("e", 100)], 3);
+    expect(rows.map((x) => [x.id, x.counted])).toEqual([
+      ["b", true],
+      ["d", true], // empate en puntos: más aciertos primero
+      ["c", true],
+      ["a", false],
+      ["e", false],
+    ]);
+    const all = [r("a", 300), r("b", 900), r("c", 500), r("d", 500, 6), r("e", 100)].map((x) => ({
+      ...x,
+      userId: "u",
+      quizId: x.id,
+    }));
+    expect(rows.filter((x) => x.counted).reduce((a, x) => a + x.score, 0)).toBe(computeLeagueStandings(all, 3)[0].points);
+  });
+
+  it("con menos de K suman todos", () => {
+    expect(leagueBreakdown([r("a", 1)], 5).every((x) => x.counted)).toBe(true);
   });
 });

@@ -59,6 +59,7 @@ model User {
   inventoryIssued    InventoryTransaction[] @relation("InventoryIssuer")
   quizzesCreated     Quiz[]
   tournamentsCreated Tournament[]
+  seasonsCreated     Season[]
   notifications      Notification[]
   backupsRequested   Backup[]
   tickets            Ticket[]               @relation("TicketAuthor")
@@ -590,6 +591,11 @@ model Tournament {
   cancelledAt          DateTime?
   createdById          String?
   createdBy            User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  // Temporada: instancia y etapa de la plantilla que lo creó.
+  seasonRunId          String?
+  seasonRun            SeasonRun?       @relation(fields: [seasonRunId], references: [id], onDelete: SetNull)
+  seasonStageId        String?
+  seasonStage          SeasonStage?     @relation(fields: [seasonStageId], references: [id], onDelete: SetNull)
   createdAt            DateTime         @default(now())
   updatedAt            DateTime         @updatedAt
 
@@ -605,6 +611,7 @@ model Tournament {
   qualifiedEntries TournamentEntry[]     @relation("EntryQualifiedFrom")
 
   @@index([seriesId])
+  @@index([seasonRunId])
 }
 
 model TournamentCategory {
@@ -626,17 +633,19 @@ model TournamentWildcard {
 }
 
 model TournamentEntry {
-  id              String      @id @default(cuid())
+  id              String               @id @default(cuid())
   tournamentId    String
-  tournament      Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournament      Tournament           @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   userId          String
-  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  enrolledAt      DateTime    @default(now())
+  user            User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrolledAt      DateTime             @default(now())
   ledgerTxId      String?
   // Eliminatoria: clasificado desde otro torneo (sin costo) y confirmación de su lugar.
   qualifiedFromId String?
-  qualifiedFrom   Tournament? @relation("EntryQualifiedFrom", fields: [qualifiedFromId], references: [id], onDelete: SetNull)
+  qualifiedFrom   Tournament?          @relation("EntryQualifiedFrom", fields: [qualifiedFromId], references: [id], onDelete: SetNull)
   qualifiedRank   Int?
+  qualifierId     String? // regla por la que entró (para volver a llenar cupos)
+  qualifier       TournamentQualifier? @relation(fields: [qualifierId], references: [id], onDelete: SetNull)
   confirmedAt     DateTime? // null = clasificado que todavía no confirmó (no juega)
   seed            Int? // fijado al armar el cuadro (1 = mejor sembrado)
 
@@ -647,15 +656,17 @@ model TournamentEntry {
 
 /// "Los N primeros de X clasifican a esta eliminatoria".
 model TournamentQualifier {
-  id                 String     @id @default(cuid())
+  id                 String            @id @default(cuid())
   tournamentId       String
-  tournament         Tournament @relation("QualifierTarget", fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournament         Tournament        @relation("QualifierTarget", fields: [tournamentId], references: [id], onDelete: Cascade)
   sourceTournamentId String
-  source             Tournament @relation("QualifierSource", fields: [sourceTournamentId], references: [id], onDelete: Cascade)
-  topN               Int
+  source             Tournament        @relation("QualifierSource", fields: [sourceTournamentId], references: [id], onDelete: Cascade)
+  fromRank           Int               @default(1) // desde el puesto (rango fromRank..topN)
+  topN               Int // hasta el puesto
   appliedAt          DateTime? // ya se inscribió a los clasificados (al terminar el origen)
+  entries            TournamentEntry[]
 
-  @@unique([tournamentId, sourceTournamentId])
+  @@unique([tournamentId, sourceTournamentId, fromRank])
   @@index([sourceTournamentId])
 }
 
@@ -941,4 +952,90 @@ model TicketEvent {
   createdAt DateTime        @default(now())
 
   @@index([ticketId, createdAt])
+}
+
+// ───────────────────────── Temporadas ─────────────────────────
+
+enum SeasonStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum SeasonRunStatus {
+  ACTIVE
+  FINISHED
+  CANCELLED
+}
+
+/// Plantilla de torneos (por puntos + eliminatorias) con fechas relativas; cada lanzamiento crea un SeasonRun.
+model Season {
+  id              String       @id @default(cuid())
+  name            String
+  slug            String       @unique
+  description     String?
+  imageKey        String?
+  status          SeasonStatus @default(DRAFT)
+  repeatAfterDays Int? // la siguiente instancia empieza N días después de que termina la anterior (null = no se repite)
+  createdById     String?
+  createdBy       User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  stages SeasonStage[]
+  rules  SeasonQualifierRule[]
+  runs   SeasonRun[]
+}
+
+/// Un torneo de la plantilla. `config` = entrada de saveTournament sin nombre, inicio, clasificatorios ni serie.
+model SeasonStage {
+  id         String   @id @default(cuid())
+  seasonId   String
+  season     Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  name       String
+  position   Int // orden; entre eliminatorias, menor = mejor nivel
+  offsetDays Int // día de inicio desde el día 0 de la instancia
+  startTime  String // "HH:mm" hora de Buenos Aires
+  config     Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tournaments Tournament[]
+  feeds       SeasonQualifierRule[] @relation("RuleSource")
+  fedBy       SeasonQualifierRule[] @relation("RuleTarget")
+
+  @@index([seasonId])
+}
+
+/// "Del puesto fromRank al toRank de la etapa origen → eliminatoria destino".
+model SeasonQualifierRule {
+  id            String      @id @default(cuid())
+  seasonId      String
+  season        Season      @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  sourceStageId String
+  sourceStage   SeasonStage @relation("RuleSource", fields: [sourceStageId], references: [id], onDelete: Cascade)
+  targetStageId String
+  targetStage   SeasonStage @relation("RuleTarget", fields: [targetStageId], references: [id], onDelete: Cascade)
+  fromRank      Int
+  toRank        Int
+
+  @@index([seasonId])
+}
+
+/// Una instancia lanzada de la temporada: sus torneos son torneos comunes, ya creados y publicados.
+model SeasonRun {
+  id            String          @id @default(cuid())
+  seasonId      String
+  season        Season          @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  number        Int
+  day0          String // "YYYY-MM-DD" (Buenos Aires)
+  startsAt      DateTime // inicio de la primera etapa
+  endsAt        DateTime // fin de la última
+  status        SeasonRunStatus @default(ACTIVE)
+  nextCreatedAt DateTime? // ya se lanzó la siguiente (repetición)
+  createdAt     DateTime        @default(now())
+
+  tournaments Tournament[]
+
+  @@unique([seasonId, number])
 }

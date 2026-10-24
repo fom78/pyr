@@ -159,7 +159,7 @@ export default async function CategoryPage({
           {top.length === 0 ? (
             <EmptyState title="La tabla todavía está vacía" description="Se llena apenas alguien termina un cuestionario." />
           ) : (
-            <StandingsTable rows={top} meId={user.id} me={myStanding} countedLabel={`Mejores ${bestK}`} countedHelp={bestKHelp} />
+            <StandingsTable rows={top} meId={user.id} me={myStanding} countedLabel={`Mejores ${bestK}`} countedHelp={bestKHelp}  breakdown={{ categoryId: category.id, tz: user.timezone }} />
           )}
         </section>
 

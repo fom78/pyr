@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Menu } from "lucide-react";
+import { Gamepad2, Menu } from "lucide-react";
 import { requirePermission, userCan } from "@/server/auth/session";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -32,6 +32,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: "/admin/cuestionarios", label: "Cuestionarios", icon: "list" },
     { href: "/admin/cuestionarios/por-aprobar", label: "Por aprobar", icon: "approve" },
     { href: "/admin/torneos", label: "Torneos", icon: "trophy" },
+    { href: "/admin/temporadas", label: "Temporadas", icon: "season" },
     ...(support ? [{ href: "/admin/soporte", label: "Soporte", icon: "support", badge: untaken } as const] : []),
     ...(users ? [{ href: "/admin/usuarios", label: "Usuarios", icon: "users" } as const] : []),
     ...(settings ? [{ href: "/admin/config", label: "Configuración", icon: "settings" } as const] : []),
@@ -46,8 +47,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin" className="text-xl">
             <Logo /> <span className="text-sm font-medium text-muted-foreground">admin</span>
           </Link>
-          <AdminNav items={items} />
-          <Link href="/" className="mt-auto text-sm text-muted-foreground hover:text-foreground">
+          {/* Con muchas secciones la lista se desplaza; "Volver al juego" queda siempre a la vista. */}
+          <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+            <AdminNav items={items} />
+          </div>
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
             ← Volver al juego
           </Link>
         </div>
@@ -60,14 +64,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
                 <Menu />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-64 p-4">
-              <SheetTitle className="mb-4">
+            <SheetContent side="left" className="flex w-64 flex-col gap-0 p-0">
+              <SheetTitle className="border-b px-4 py-3">
                 <Logo /> admin
               </SheetTitle>
-              <AdminNav items={items} />
-              <Link href="/" className="mt-6 block text-sm text-muted-foreground">
-                ← Volver al juego
-              </Link>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <AdminNav items={items} compact />
+              </div>
+              <div className="border-t p-2">
+                <Button asChild variant="outline" className="w-full justify-start">
+                  <Link href="/">
+                    <Gamepad2 /> Volver al juego
+                  </Link>
+                </Button>
+              </div>
             </SheetContent>
           </Sheet>
           <span className="font-semibold">Administración</span>
@@ -76,9 +86,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               {unread} aviso{unread === 1 ? "" : "s"}
             </Link>
           )}
-          <span className={unread > 0 ? "text-xs text-muted-foreground" : "ml-auto text-xs text-muted-foreground"}>
+          <span className={`truncate text-xs text-muted-foreground ${unread > 0 ? "" : "ml-auto"}`}>
             {user.name} · {user.role === "ADMIN" ? "Admin" : "Mod"}
           </span>
+          <Button asChild variant="ghost" size="icon" aria-label="Volver al juego" title="Volver al juego">
+            <Link href="/">
+              <Gamepad2 />
+            </Link>
+          </Button>
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 p-4 md:p-6">{children}</main>
       </div>

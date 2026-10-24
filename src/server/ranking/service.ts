@@ -2,7 +2,7 @@ import { countsForTableUntil } from "@/server/quiz/status";
 import { prisma, type Db } from "@/server/db";
 import { getCategorySettings } from "@/server/config/service";
 import { activeBanWhere } from "@/server/users/bans";
-import { computeLeagueStandings, computeTournamentStandings, type StandingRow } from "./compute";
+import { computeLeagueStandings, computeTournamentStandings, leagueBreakdown, type StandingRow } from "./compute";
 import { logger } from "@/server/logger";
 import { compareResults } from "@/server/scoring/scoring";
 
@@ -67,6 +67,28 @@ export async function leagueImpact(
     /** Hasta cuándo este cuestionario cuenta para la tabla. */
     countsUntil: countsForTableUntil(attempt.quiz, s["ranking.windowDays"]),
     participants: await db.categoryStanding.count({ where: { categoryId } }),
+  };
+}
+
+/**
+ * Qué cuestionarios suman en la tabla de un jugador: los mismos que usa `recomputeCategoryStandings`
+ * (ventana y K de la categoría), con su puntaje y si entran entre los K mejores.
+ */
+export async function standingBreakdown(categoryId: string, userId: string, now = new Date(), db: Db = prisma) {
+  const category = await db.category.findUnique({ where: { id: categoryId } });
+  if (!category) return null;
+  const s = await getCategorySettings(category, db);
+  const quizzes = await countedLeagueQuizzes(categoryId, s["ranking.windowDays"], now, db);
+  const attempts = await db.attempt.findMany({
+    where: { userId, quizId: { in: quizzes.map((q) => q.id) }, status: { in: [...FINISHED] } },
+    select: { id: true, score: true, correctCount: true, totalTimeMs: true, finishedAt: true, quiz: { select: { title: true, closesAt: true } } },
+  });
+  const rows = leagueBreakdown(attempts, s["ranking.bestK"]);
+  return {
+    bestK: s["ranking.bestK"],
+    windowDays: s["ranking.windowDays"],
+    total: rows.filter((r) => r.counted).reduce((a, r) => a + r.score, 0),
+    rows: rows.map((r) => ({ id: r.id, title: r.quiz.title, closesAt: r.quiz.closesAt, score: r.score, counted: r.counted })),
   };
 }
 

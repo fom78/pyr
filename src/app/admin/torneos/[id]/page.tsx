@@ -126,7 +126,7 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
               thirdPlaceMatch: t.thirdPlaceMatch,
               questionSource: t.questionSource,
               uniqueQuestions: t.uniqueQuestions,
-              qualifiers: t.qualifiers.map((q) => ({ sourceTournamentId: q.sourceTournamentId, topN: q.topN })),
+              qualifiers: t.qualifiers.map((q) => ({ sourceTournamentId: q.sourceTournamentId, fromRank: q.fromRank, topN: q.topN })),
             }}
           />
         ) : (
@@ -154,7 +154,7 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
                       </li>
                       {t.qualifiers.map((q) => (
                         <li key={q.id} className="text-muted-foreground text-xs">
-                          {q.source.name}: primeros {q.topN} · {q.appliedAt ? "ya inscriptos" : "cuando termine"}
+                          {q.source.name}: {q.fromRank > 1 ? `puestos ${q.fromRank}–${q.topN}` : `primeros ${q.topN}`} · {q.appliedAt ? "ya inscriptos" : "cuando termine"}
                         </li>
                       ))}
                     </ul>

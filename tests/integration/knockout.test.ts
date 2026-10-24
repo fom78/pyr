@@ -3,7 +3,14 @@ import { prisma } from "@/server/db";
 import { checkCanPlay, getCurrent, startAttempt, submitAnswer } from "@/server/game/engine";
 import { getAttemptResult } from "@/server/game/results";
 import { enrollInTournament, publishTournament, saveTournament } from "@/server/tournaments/service";
-import { applyQualifiers, buildBracket, confirmQualification, ensureMatchQuizzes, knockoutCapacity, runKnockouts } from "@/server/tournaments/knockout";
+import {
+  applyQualifiers,
+  buildBracket,
+  confirmQualification,
+  ensureMatchQuizzes,
+  knockoutCapacity,
+  runKnockouts,
+} from "@/server/tournaments/knockout";
 import { getBalance } from "@/server/credits/service";
 import { hasDb, makeCategory, makeQuestions, makeUser, resetDb } from "./helpers";
 
@@ -59,7 +66,12 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
     // Torneo de origen (por puntos), ya terminado antes de la eliminatoria.
     const source = await saveTournament(
       null,
-      input([cat.id], { name: "Liga de otoño", format: "POINTS", startsAt: new Date(Date.now() - 5 * 24 * HOUR), maxParticipants: null }),
+      input([cat.id], {
+        name: "Liga de otoño",
+        format: "POINTS",
+        startsAt: new Date(Date.now() - 5 * 24 * HOUR),
+        maxParticipants: null,
+      }),
       admin,
     );
     const ko = await saveTournament(null, input([cat.id], { qualifiers: [{ sourceTournamentId: source.id, topN: 2 }] }), admin);
@@ -89,10 +101,18 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
     await prisma.tournamentResult.createMany({ data: [result(q1.id, 1), result(open1.id, 2), result(q2.id, 3)] });
     await prisma.tournament.update({ where: { id: ko.id }, data: { autoConfirmQualified: false } });
     expect(await applyQualifiers(source.id)).toBe(2);
-    const pendingQ2 = await prisma.tournamentEntry.findUniqueOrThrow({ where: { tournamentId_userId: { tournamentId: ko.id, userId: q2.id } } });
+    const pendingQ2 = await prisma.tournamentEntry.findUniqueOrThrow({
+      where: { tournamentId_userId: { tournamentId: ko.id, userId: q2.id } },
+    });
     expect(pendingQ2).toMatchObject({ qualifiedRank: 3, confirmedAt: null });
     await confirmQualification(q1.id, ko.id);
-    expect((await prisma.tournamentEntry.findUniqueOrThrow({ where: { tournamentId_userId: { tournamentId: ko.id, userId: open1.id } } })).qualifiedRank).toBe(2);
+    expect(
+      (
+        await prisma.tournamentEntry.findUniqueOrThrow({
+          where: { tournamentId_userId: { tournamentId: ko.id, userId: open1.id } },
+        })
+      ).qualifiedRank,
+    ).toBe(2);
 
     // Cierra la inscripción: q2 no confirmó y pierde el lugar → 3 jugadores en un cuadro de 4.
     const start = new Date(ko.startsAt.getTime() + MIN);
@@ -103,7 +123,10 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
     expect(r1[0]).toMatchObject({ playerAId: q1.id, playerBId: null, result: "BYE", winnerId: q1.id });
     expect(r1[1]).toMatchObject({ playerAId: open1.id, playerBId: open2.id, winnerId: null });
     expect(r1[1].quizId).toBeTruthy();
-    const quiz = await prisma.quiz.findUniqueOrThrow({ where: { id: r1[1].quizId! }, include: { _count: { select: { questions: true } } } });
+    const quiz = await prisma.quiz.findUniqueOrThrow({
+      where: { id: r1[1].quizId! },
+      include: { _count: { select: { questions: true } } },
+    });
     expect(quiz._count.questions).toBe(3);
 
     // Solo los dos del partido lo pueden jugar.
@@ -121,7 +144,9 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
     expect(shown?.match?.opponentScore).toBeGreaterThan(a1.score);
 
     // Final: q1 contra open2, con su propio cuestionario (preguntas distintas).
-    const final = await prisma.knockoutMatch.findUniqueOrThrow({ where: { tournamentId_round_position: { tournamentId: ko.id, round: 2, position: 0 } } });
+    const final = await prisma.knockoutMatch.findUniqueOrThrow({
+      where: { tournamentId_round_position: { tournamentId: ko.id, round: 2, position: 0 } },
+    });
     expect(final).toMatchObject({ playerAId: q1.id, playerBId: open2.id });
     const finalQs = await prisma.quizQuestion.findMany({ where: { quizId: final.quizId! } });
     const firstQs = await prisma.quizQuestion.findMany({ where: { quizId: quiz.id } });
@@ -129,7 +154,10 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
 
     // Nadie juega la final: al cierre pasa el mejor sembrado por W.O. y el torneo termina.
     await runKnockouts(new Date(final.closesAt.getTime() + MIN));
-    expect(await prisma.knockoutMatch.findUniqueOrThrow({ where: { id: final.id } })).toMatchObject({ winnerId: q1.id, result: "WALKOVER" });
+    expect(await prisma.knockoutMatch.findUniqueOrThrow({ where: { id: final.id } })).toMatchObject({
+      winnerId: q1.id,
+      result: "WALKOVER",
+    });
     expect((await prisma.tournament.findUniqueOrThrow({ where: { id: ko.id } })).status).toBe("FINISHED");
     const results = await prisma.tournamentResult.findMany({ where: { tournamentId: ko.id }, orderBy: { rank: "asc" } });
     expect(results.map((r) => [r.userId, r.rank])).toEqual([
@@ -155,10 +183,14 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
     const admin = await makeUser("ADMIN");
     const cat = await makeCategory();
     await expect(saveTournament(null, input([cat.id], { maxParticipants: 10 }), admin)).rejects.toThrow();
-    const late = await saveTournament(null, input([cat.id], { name: "Larga", format: "POINTS", maxParticipants: null, quizCount: 30 }), admin);
-    await expect(saveTournament(null, input([cat.id], { qualifiers: [{ sourceTournamentId: late.id, topN: 2 }] }), admin)).rejects.toThrow(
-      "termina después",
+    const late = await saveTournament(
+      null,
+      input([cat.id], { name: "Larga", format: "POINTS", maxParticipants: null, quizCount: 30 }),
+      admin,
     );
+    await expect(
+      saveTournament(null, input([cat.id], { qualifiers: [{ sourceTournamentId: late.id, topN: 2 }] }), admin),
+    ).rejects.toThrow("termina después");
   });
 
   it("partidos con preguntas propias y un pozo común; reutilizadas primero", async () => {
@@ -223,17 +255,68 @@ describe.skipIf(!hasDb)("eliminatorias", () => {
         questions: { create: qs.map((q, position) => ({ questionId: q.id, position })) },
       },
     });
-    const ko = await saveTournament(null, input([cat.id], { questionsPerQuiz: 3, uniqueQuestions: 2, questionSource: "REUSED_FIRST" }), admin);
+    const ko = await saveTournament(
+      null,
+      input([cat.id], { questionsPerQuiz: 3, uniqueQuestions: 2, questionSource: "REUSED_FIRST" }),
+      admin,
+    );
     await publishTournament(ko.id, admin);
     for (const u of await Promise.all([1, 2].map(() => makeUser()))) await enrollInTournament(u.id, ko.id);
     const start = new Date(ko.startsAt.getTime() + MIN);
     await buildBracket(ko.id, start);
-    const match = await prisma.knockoutMatch.findFirstOrThrow({ where: { tournamentId: ko.id, round: 1, quizId: { not: null } } });
+    const match = await prisma.knockoutMatch.findFirstOrThrow({
+      where: { tournamentId: ko.id, round: 1, quizId: { not: null } },
+    });
     expect(await prisma.quizQuestion.count({ where: { quizId: match.quizId! } })).toBe(3);
 
     // Quedó corto (p. ej. banco vacío en su momento): el worker lo completa mientras nadie haya empezado.
     await prisma.quizQuestion.deleteMany({ where: { quizId: match.quizId! } });
     await ensureMatchQuizzes(ko.id, start);
     expect(await prisma.quizQuestion.count({ where: { quizId: match.quizId! } })).toBe(3);
+  });
+});
+
+describe.skipIf(!hasDb)("eliminatoria solo por clasificación", () => {
+  beforeEach(resetDb);
+
+  it("si los clasificatorios cubren el cuadro no hay inscripción abierta", async () => {
+    const admin = await makeUser("ADMIN");
+    const player = await makeUser();
+    const cat = await makeCategory();
+    await makeQuestions(cat.id, 12);
+    const source = await saveTournament(
+      null,
+      input([cat.id], {
+        name: "Apertura",
+        format: "POINTS",
+        startsAt: new Date(Date.now() - 5 * 24 * HOUR),
+        maxParticipants: null,
+      }),
+      admin,
+    );
+    const ko = await saveTournament(null, input([cat.id], { qualifiers: [{ sourceTournamentId: source.id, topN: 4 }] }), admin);
+    await publishTournament(ko.id, admin);
+    expect(await knockoutCapacity(ko.id)).toMatchObject({ qualifiersOnly: true, open: 0 });
+    await expect(enrollInTournament(player.id, ko.id)).rejects.toThrow("solo por clasificación");
+
+    // Aunque el origen termine con menos clasificados, los lugares libres no se abren al público.
+    await prisma.tournament.update({ where: { id: source.id }, data: { status: "FINISHED" } });
+    await prisma.tournamentResult.create({
+      data: {
+        tournamentId: source.id,
+        userId: admin.id,
+        rank: 1,
+        participants: 1,
+        points: 10,
+        quizzesPlayed: 1,
+        quizzesTotal: 1,
+        correctCount: 1,
+        tournamentName: "Apertura",
+        finishedAt: new Date(),
+      },
+    });
+    await applyQualifiers(source.id);
+    expect(await knockoutCapacity(ko.id)).toMatchObject({ qualifiersOnly: true, entries: 1, reserved: 0, open: 0 });
+    await expect(enrollInTournament(player.id, ko.id)).rejects.toThrow("solo por clasificación");
   });
 });

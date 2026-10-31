@@ -81,7 +81,10 @@ export async function draftContext(
   db: Db = prisma,
 ): Promise<DraftContext | null> {
   if (quiz.tournamentId) {
-    const t = await db.tournament.findUnique({ where: { id: quiz.tournamentId }, include: { categories: { select: { categoryId: true } } } });
+    const t = await db.tournament.findUnique({
+      where: { id: quiz.tournamentId },
+      include: { categories: { select: { categoryId: true } } },
+    });
     if (!t) return null;
     return {
       name: t.name,
@@ -148,7 +151,8 @@ export async function saveSchedule(categoryId: string, raw: unknown, actor: { id
   const staleAuto = stale.filter((q) => !q.createdById).map((q) => q.id);
   const staleManual = stale.filter((q) => q.createdById).map((q) => q.id);
   if (staleAuto.length) await db.quiz.deleteMany({ where: { id: { in: staleAuto } } });
-  if (staleManual.length) await db.quiz.updateMany({ where: { id: { in: staleManual } }, data: { scheduleId: null, slotAt: null } });
+  if (staleManual.length)
+    await db.quiz.updateMany({ where: { id: { in: staleManual } }, data: { scheduleId: null, slotAt: null } });
 
   await logAudit(
     {
@@ -198,7 +202,10 @@ export async function loadCandidates(categoryId: string, s: Settings, now: Date,
  */
 export async function loadAnyApproved(categoryId: string, now: Date, db: Db = prisma): Promise<ReusableCandidate[]> {
   const rows = await db.question.findMany({
-    where: { ...buildQuestionWhere({ categoryId, status: "APPROVED" }, now), quizQuestions: { none: { quiz: { closesAt: { gt: now } } } } },
+    where: {
+      ...buildQuestionWhere({ categoryId, status: "APPROVED" }, now),
+      quizQuestions: { none: { quiz: { closesAt: { gt: now } } } },
+    },
     select: {
       id: true,
       difficulty: true,
@@ -206,6 +213,25 @@ export async function loadAnyApproved(categoryId: string, now: Date, db: Db = pr
     },
   });
   return rows.map((r) => ({ id: r.id, difficulty: r.difficulty, lastUsedAt: r.quizQuestions[0]?.quiz.opensAt ?? new Date(0) }));
+}
+
+/**
+ * Candidatas de un torneo (por puntos): las mismas que la liga y, como último recurso, cualquier aprobada
+ * que no esté en un cuestionario abierto o por abrir. En torneos siempre se reutiliza (ignora
+ * `allowReuse` y `reuseAfterDays`): un cuestionario de torneo no puede quedar sin salir.
+ */
+export async function tournamentPools(categoryIds: string[], s: Settings, now: Date, db: Db = prisma) {
+  return Promise.all(
+    categoryIds.map(async (id) => {
+      const [base, any] = await Promise.all([
+        loadCandidates(id, { ...s, "autoquiz.allowReuse": true }, now, db),
+        loadAnyApproved(id, now, db),
+      ]);
+      const fresh = new Set(base.fresh.map((c) => c.id));
+      const seen = new Set(base.reusable.map((c) => c.id));
+      return { fresh: base.fresh, reusable: [...base.reusable, ...any.filter((c) => !fresh.has(c.id) && !seen.has(c.id))] };
+    }),
+  );
 }
 
 function removePicked<T extends { id: string }>(list: T[], ids: Set<string>) {
@@ -405,6 +431,13 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
     const ctx = await draftContext(quiz, db);
     if (!ctx) continue;
     const s = ctx.s;
+    // Torneo: no pasa por "aprobar o saltear" de la liga; la gente quiere jugar.
+    if (quiz.tournamentId && !quiz.createdById) {
+      const r = await handleTournamentDraft(quiz, ctx, now, db);
+      if (r === "published") published++;
+      if (r === "skipped") skipped++;
+      continue;
+    }
     if (quiz.opensAt <= now) {
       // Un borrador automático se descarta; uno cargado a mano se suelta del turno y queda como borrador.
       if (quiz.createdById) await db.quiz.update({ where: { id: quiz.id }, data: { scheduleId: null, slotAt: null } });
@@ -451,6 +484,78 @@ export async function handleDueDrafts(now = new Date(), db: Db = prisma) {
     }
   }
   return { published, skipped };
+}
+
+/**
+ * Borrador automático de torneo: completo, se publica solo `autoPublishHours` antes de abrir (aunque
+ * `autoquiz.autoPublish` esté apagado). Al llegar la apertura se completa con lo que haya y se publica
+ * con las que tenga; solo sin ninguna pregunta se descarta (y el turno queda salteado).
+ */
+async function handleTournamentDraft(
+  quiz: {
+    id: string;
+    title: string;
+    opensAt: Date;
+    closesAt: Date;
+    slotAt: Date | null;
+    tournamentId: string | null;
+    _count: { questions: number };
+  },
+  ctx: DraftContext,
+  now: Date,
+  db: Db,
+): Promise<"published" | "skipped" | null> {
+  const opened = quiz.opensAt <= now;
+  let count = quiz._count.questions;
+  if (opened && count < ctx.perQuiz) {
+    const full = await db.quiz.findUniqueOrThrow({ where: { id: quiz.id }, include: draftQuestionsInclude });
+    const pools = mergePools(await tournamentPools(ctx.categoryIds, ctx.s, now, db));
+    count += (await topUpDraft(full, pools, ctx.perQuiz, true, null, db)).added;
+  }
+  if (!opened && (count < ctx.perQuiz || now < autoPublishAt(quiz.opensAt, ctx.s))) return null;
+  if (count > 0 && quiz.closesAt > now) {
+    try {
+      await publishQuiz(quiz.id, SYSTEM_ACTOR, now);
+    } catch (err) {
+      if (!(err instanceof UserError)) throw err;
+      logger.warn({ quizId: quiz.id, err: err.message }, "no se pudo publicar solo el borrador de torneo");
+      return null;
+    }
+    await notifyStaff(
+      {
+        level: count < ctx.perQuiz ? "WARNING" : "INFO",
+        kind: "draft.autoPublished",
+        title: `${ctx.name}: se publicó solo un cuestionario`,
+        body:
+          count < ctx.perQuiz
+            ? `“${quiz.title}” salió con ${count} de ${ctx.perQuiz} preguntas: no alcanzó el banco.`
+            : `Nadie aprobó “${quiz.title}” y se publicó automáticamente; abre ${formatDateTime(quiz.opensAt)}.`,
+        href: `/admin/cuestionarios/${quiz.id}`,
+        dedupeKey: `draft.autoPublished:${quiz.id}`,
+      },
+      now,
+      db,
+    );
+    return "published";
+  }
+  if (!opened) return null;
+  await db.quiz.delete({ where: { id: quiz.id } });
+  if (quiz.slotAt && quiz.tournamentId)
+    await db.tournament.update({ where: { id: quiz.tournamentId }, data: { skippedSlots: { push: quiz.slotAt } } });
+  await logAudit({ actorId: null, action: "quiz.autoSkipped", entityType: "Quiz", entityId: quiz.id, before: quiz }, db);
+  await notifyStaff(
+    {
+      level: "CRITICAL",
+      kind: "draft.skipped",
+      title: `${ctx.name}: no salió un cuestionario`,
+      body: `“${quiz.title}” llegó a su apertura (${formatDateTime(quiz.opensAt)}) sin ninguna pregunta disponible en el banco y se salteó. Cargá preguntas en sus categorías.`,
+      href: "/admin/preguntas",
+      dedupeKey: `draft.skipped:${quiz.id}`,
+    },
+    now,
+    db,
+  );
+  return "skipped";
 }
 
 /** Momento en que un borrador completo sin aprobar se publica solo. */
@@ -502,7 +607,15 @@ export async function bankCoverage(schedule: ScheduleWithCategory, now = new Dat
           tournamentId: null,
           opensAt: { gte: new Date(grid[0].at.getTime() - MANUAL_CLASH_MS), lte: new Date(until.getTime() + MANUAL_CLASH_MS) },
         },
-        select: { id: true, title: true, scheduleId: true, slotAt: true, opensAt: true, publishedAt: true, _count: { select: { questions: true } } },
+        select: {
+          id: true,
+          title: true,
+          scheduleId: true,
+          slotAt: true,
+          opensAt: true,
+          publishedAt: true,
+          _count: { select: { questions: true } },
+        },
       })
     : [];
   const quizFor = (at: Date) =>
@@ -741,7 +854,15 @@ export async function unreadySlots(now = new Date(), hours?: number, db: Db = pr
         tournamentId: null,
         opensAt: { gte: new Date(slots[0].getTime() - MANUAL_CLASH_MS), lte: new Date(until.getTime() + MANUAL_CLASH_MS) },
       },
-      select: { id: true, title: true, scheduleId: true, slotAt: true, opensAt: true, publishedAt: true, _count: { select: { questions: true } } },
+      select: {
+        id: true,
+        title: true,
+        scheduleId: true,
+        slotAt: true,
+        opensAt: true,
+        publishedAt: true,
+        _count: { select: { questions: true } },
+      },
     });
     for (const at of slots) {
       const q =
@@ -862,7 +983,11 @@ export async function topUpDraft(
     });
   }
   const ids = new Set(picks.map((p) => p.id));
-  return { added: picks.length, missing, pools: { fresh: removePicked(pools.fresh, ids), reusable: removePicked(pools.reusable, ids) } };
+  return {
+    added: picks.length,
+    missing,
+    pools: { fresh: removePicked(pools.fresh, ids), reusable: removePicked(pools.reusable, ids) },
+  };
 }
 
 export const draftQuestionsInclude = {
@@ -892,12 +1017,25 @@ export async function fillIncompleteDrafts(now = new Date(), db: Db = prisma) {
     let pools = await loadCandidates(schedule.categoryId, s, now, db);
     for (const quiz of drafts) {
       if (!pools.fresh.length && !pools.reusable.length) break;
-      const r = await topUpDraft(quiz, pools, s["quiz.questionCount"], s["autoquiz.allowReuse"], schedule.difficultyMix as DifficultyMix | null, db);
+      const r = await topUpDraft(
+        quiz,
+        pools,
+        s["quiz.questionCount"],
+        s["autoquiz.allowReuse"],
+        schedule.difficultyMix as DifficultyMix | null,
+        db,
+      );
       pools = r.pools;
       if (r.added) {
         filled++;
         await logAudit(
-          { actorId: null, action: "quiz.autoFill", entityType: "Quiz", entityId: quiz.id, meta: { added: r.added, missing: r.missing } },
+          {
+            actorId: null,
+            action: "quiz.autoFill",
+            entityType: "Quiz",
+            entityId: quiz.id,
+            meta: { added: r.added, missing: r.missing },
+          },
           db,
         );
       }
@@ -941,7 +1079,10 @@ export async function suggestRandomQuestions(quizId: string, n: number, exclude:
       ).picks
     : [];
   const ids = [...first.picks, ...rest].map((p) => p.id);
-  const rows = await db.question.findMany({ where: { id: { in: ids } }, select: { id: true, text: true, status: true, difficulty: true } });
+  const rows = await db.question.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, text: true, status: true, difficulty: true },
+  });
   return ids.map((id) => rows.find((r) => r.id === id)!).filter(Boolean);
 }
 
@@ -953,8 +1094,18 @@ export async function fillDraft(quizId: string, actor: { id: string }, now = new
     if (quiz.questions.length >= ctx.perQuiz) throw new UserError("El borrador ya tiene todas sus preguntas.");
     const pools = mergePools(await contextPools(ctx, now, tx));
     const r = await topUpDraft(quiz, pools, ctx.perQuiz, ctx.s["autoquiz.allowReuse"], ctx.mix, tx);
-    if (!r.added) throw new UserError("No hay preguntas aprobadas disponibles para completarlo. Cargá o aprobá más en la categoría.");
-    await logAudit({ actorId: actor.id, action: "quiz.fill", entityType: "Quiz", entityId: quizId, meta: { added: r.added, missing: r.missing } }, tx);
+    if (!r.added)
+      throw new UserError("No hay preguntas aprobadas disponibles para completarlo. Cargá o aprobá más en la categoría.");
+    await logAudit(
+      {
+        actorId: actor.id,
+        action: "quiz.fill",
+        entityType: "Quiz",
+        entityId: quizId,
+        meta: { added: r.added, missing: r.missing },
+      },
+      tx,
+    );
     return { added: r.added, missing: r.missing };
   });
 }

@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/session";
+import { getSettings } from "@/server/config/service";
 import { prisma } from "@/server/db";
 import { getBalance } from "@/server/credits/service";
 import { registrationState } from "@/server/tournaments/service";
@@ -61,7 +62,7 @@ export default async function TournamentPage({
   const now = new Date();
   const tz = user.timezone;
   const ko = t.format === "KNOCKOUT";
-  const [entry, balance, attempts, result, bracket, capacity, season] = await Promise.all([
+  const [entry, balance, attempts, result, bracket, capacity, season, settings] = await Promise.all([
     prisma.tournamentEntry.findUnique({ where: { tournamentId_userId: { tournamentId: t.id, userId: user.id } } }),
     getBalance(user.id),
     prisma.attempt.findMany({ where: { userId: user.id, quizId: { in: t.quizzes.map((q) => q.id) } } }),
@@ -69,6 +70,7 @@ export default async function TournamentPage({
     ko ? getBracket(t.id) : null,
     ko ? knockoutCapacity(t.id) : null,
     seasonContext(t),
+    getSettings(),
   ]);
   const wildcardsLeft = entry ? await remainingWildcards(t.id, user.id) : [];
   const reg = registrationState(t, now);
@@ -213,6 +215,14 @@ export default async function TournamentPage({
               <> · ganaste {prizeText({ credits: result.prizeCredits, stars: result.prizeStars })}</>
             )}
             .
+            {settings["support.cafecitoUrl"] && (
+              <span className="text-muted-foreground mt-2 block text-xs">
+                ¿Te gustó el torneo? PyR se mantiene con colaboraciones:{" "}
+                <Link href="/colaborar" className="text-primary underline-offset-2 hover:underline">
+                  invitanos un cafecito ☕
+                </Link>
+              </span>
+            )}
           </p>
         ) : (
           <p className="bg-muted mb-6 rounded-md p-3 text-sm">Este torneo finalizó. ¡Gracias por participar!</p>

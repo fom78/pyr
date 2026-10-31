@@ -18,6 +18,9 @@ import { addLocalDays } from "@/server/autoquiz/slots";
 import { tournamentTimeline, timelineIssues } from "./timeline";
 import { isBracketSize, roundsFor } from "./bracket";
 import { applyQualifiers, knockoutCapacity, knockoutFinalRows } from "./knockout";
+import { isQualifiersOnly, qualifierSlots, registrationState } from "./registration";
+
+export { isQualifiersOnly, qualifierSlots, registrationState };
 
 const HOUR = 3_600_000;
 
@@ -37,8 +40,16 @@ export const tournamentInput = z
     categoryIds: z.array(z.string()).min(1, "Elegí al menos una categoría."),
     startsAt: z.coerce.date({ error: "Elegí cuándo empieza." }),
     quizCount: z.coerce.number().int().min(1, "Al menos 1 cuestionario.").max(100),
-    frequencyHours: z.coerce.number().int().min(1, "Mínimo 1 hora.").max(24 * 30, "Máximo 30 días (720 h)."),
-    quizActiveHours: z.coerce.number().int().min(1, "Mínimo 1 hora.").max(24 * 7, "Máximo 7 días (168 h)."),
+    frequencyHours: z.coerce
+      .number()
+      .int()
+      .min(1, "Mínimo 1 hora.")
+      .max(24 * 30, "Máximo 30 días (720 h)."),
+    quizActiveHours: z.coerce
+      .number()
+      .int()
+      .min(1, "Mínimo 1 hora.")
+      .max(24 * 7, "Máximo 7 días (168 h)."),
     registrationLeadDays: z.coerce.number().int().min(0).max(60),
     lateEntryDays: z.coerce.number().int().min(0).max(60),
     questionsPerQuiz: z.coerce.number().int().min(1).max(100),
@@ -53,8 +64,17 @@ export const tournamentInput = z
         z
           .object({
             rank: z.coerce.number().int().min(1),
-            credits: z.coerce.number({ error: "Premio inválido." }).int("Los premios son números enteros.").min(0, "Premio inválido.").max(1_000_000),
-            stars: z.coerce.number({ error: "Premio inválido." }).int("Los premios son números enteros.").min(0, "Premio inválido.").max(10_000).default(0),
+            credits: z.coerce
+              .number({ error: "Premio inválido." })
+              .int("Los premios son números enteros.")
+              .min(0, "Premio inválido.")
+              .max(1_000_000),
+            stars: z.coerce
+              .number({ error: "Premio inválido." })
+              .int("Los premios son números enteros.")
+              .min(0, "Premio inválido.")
+              .max(10_000)
+              .default(0),
           })
           .refine((p) => p.credits > 0 || p.stars > 0, "Cada puesto premiado tiene que dar créditos o estrellas."),
       )
@@ -86,41 +106,45 @@ export const tournamentInput = z
   .transform((t) =>
     // Eliminatoria: cada ronda es un "cuestionario" que dura frequencyHours; la inscripción cierra al empezar.
     t.format === "KNOCKOUT" && t.maxParticipants && isBracketSize(t.maxParticipants)
-      ? { ...t, quizCount: roundsFor(t.maxParticipants), quizActiveHours: t.frequencyHours, lateEntryDays: 0, autoQuizzes: false, repeatEveryDays: null }
+      ? {
+          ...t,
+          quizCount: roundsFor(t.maxParticipants),
+          quizActiveHours: t.frequencyHours,
+          lateEntryDays: 0,
+          autoQuizzes: false,
+          repeatEveryDays: null,
+        }
       : t,
   )
   .superRefine((t, ctx) => {
     if (t.format === "KNOCKOUT") {
       if (!t.maxParticipants || !isBracketSize(t.maxParticipants))
-        ctx.addIssue({ code: "custom", path: ["maxParticipants"], message: "El cuadro tiene que ser de 4, 8, 16, 32, 64, 128 o 256 jugadores." });
+        ctx.addIssue({
+          code: "custom",
+          path: ["maxParticipants"],
+          message: "El cuadro tiene que ser de 4, 8, 16, 32, 64, 128 o 256 jugadores.",
+        });
       const reserved = t.qualifiers.reduce((a, q) => a + qualifierSlots(q), 0);
       if (t.maxParticipants && reserved > t.maxParticipants)
-        ctx.addIssue({ code: "custom", path: ["qualifiers"], message: `Los clasificatorios reservan ${reserved} lugares y el cuadro es de ${t.maxParticipants}.` });
+        ctx.addIssue({
+          code: "custom",
+          path: ["qualifiers"],
+          message: `Los clasificatorios reservan ${reserved} lugares y el cuadro es de ${t.maxParticipants}.`,
+        });
       if (t.uniqueQuestions != null && t.uniqueQuestions > t.questionsPerQuiz)
         ctx.addIssue({ code: "custom", path: ["uniqueQuestions"], message: "No pueden ser más que las preguntas por partido." });
       const ids = t.qualifiers.map((q) => `${q.sourceTournamentId}:${q.fromRank}`);
-      if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", path: ["qualifiers"], message: "Hay clasificatorios repetidos." });
-    } else if (t.qualifiers.length) ctx.addIssue({ code: "custom", path: ["qualifiers"], message: "Solo las eliminatorias tienen clasificatorios." });
+      if (new Set(ids).size !== ids.length)
+        ctx.addIssue({ code: "custom", path: ["qualifiers"], message: "Hay clasificatorios repetidos." });
+    } else if (t.qualifiers.length)
+      ctx.addIssue({ code: "custom", path: ["qualifiers"], message: "Solo las eliminatorias tienen clasificatorios." });
     for (const i of timelineIssues(t)) ctx.addIssue({ code: "custom", path: [i.field], message: i.message });
     const ranks = t.prizes.map((p) => p.rank);
-    if (new Set(ranks).size !== ranks.length) ctx.addIssue({ code: "custom", path: ["prizes"], message: "Hay puestos de premio repetidos." });
+    if (new Set(ranks).size !== ranks.length)
+      ctx.addIssue({ code: "custom", path: ["prizes"], message: "Hay puestos de premio repetidos." });
   });
 
 export type TournamentInput = z.infer<typeof tournamentInput>;
-
-/** Lugares que da un clasificatorio: del puesto `fromRank` al `topN`. */
-export function qualifierSlots(q: { fromRank: number; topN: number }) {
-  return Math.max(0, q.topN - q.fromRank + 1);
-}
-
-/**
- * Eliminatoria "solo por clasificación": sus clasificatorios cubren todo el cuadro, así que no hay
- * inscripción abierta al público. Los lugares que no se llenen quedan como pases libres.
- */
-export function isQualifiersOnly(t: { format: string; maxParticipants: number | null; qualifiers: { fromRank: number; topN: number }[] }) {
-  if (t.format !== "KNOCKOUT" || !t.maxParticipants || t.qualifiers.length === 0) return false;
-  return t.qualifiers.reduce((a, q) => a + qualifierSlots(q), 0) >= t.maxParticipants;
-}
 
 /** Campos que cambian el calendario del torneo (no se pueden tocar una vez que empezó). */
 const TIMING_KEYS = ["quizCount", "frequencyHours", "quizActiveHours", "registrationLeadDays", "lateEntryDays"] as const;
@@ -135,14 +159,19 @@ export async function saveTournament(id: string | null, raw: unknown, actor: { i
   const slug = input.slug || slugify(input.name);
   if (await prisma.tournament.findFirst({ where: { slug, NOT: id ? { id } : undefined } }))
     throw new UserError("Ya existe un torneo con ese identificador.");
-  const before = id ? await prisma.tournament.findUnique({ where: { id }, include: { _count: { select: { entries: true } } } }) : null;
+  const before = id
+    ? await prisma.tournament.findUnique({ where: { id }, include: { _count: { select: { entries: true } } } })
+    : null;
   if (id && !before) throw new NotFoundError("Torneo");
-  if (before && (before.status === "FINISHED" || before.status === "CANCELLED")) throw new UserError("El torneo ya terminó o fue cancelado.");
-  if (before && before.status !== "DRAFT" && before.format !== input.format) throw new UserError("El formato solo se cambia mientras el torneo es borrador.");
+  if (before && (before.status === "FINISHED" || before.status === "CANCELLED"))
+    throw new UserError("El torneo ya terminó o fue cancelado.");
+  if (before && before.status !== "DRAFT" && before.format !== input.format)
+    throw new UserError("El formato solo se cambia mientras el torneo es borrador.");
   for (const q of input.qualifiers) {
     const src = await prisma.tournament.findUnique({ where: { id: q.sourceTournamentId } });
     if (!src || src.id === id) throw new UserError("Un torneo clasificatorio no existe o es este mismo.");
-    if (src.endsAt > input.startsAt) throw new UserError(`"${src.name}" termina después de que empieza esta eliminatoria: sus clasificados no llegarían.`);
+    if (src.endsAt > input.startsAt)
+      throw new UserError(`"${src.name}" termina después de que empieza esta eliminatoria: sus clasificados no llegarían.`);
   }
   if (before && before._count.entries > 0 && before.entryCost !== input.entryCost)
     throw new UserError("No se puede cambiar el costo cuando ya hay inscriptos.");
@@ -185,19 +214,26 @@ export async function saveTournament(id: string | null, raw: unknown, actor: { i
     autoConfirmQualified: input.autoConfirmQualified,
     thirdPlaceMatch: input.thirdPlaceMatch,
     questionSource: input.questionSource,
-    uniqueQuestions: input.uniqueQuestions != null && input.uniqueQuestions < input.questionsPerQuiz ? input.uniqueQuestions : null,
+    uniqueQuestions:
+      input.uniqueQuestions != null && input.uniqueQuestions < input.questionsPerQuiz ? input.uniqueQuestions : null,
   };
   const t = await prisma.$transaction(async (tx) => {
-    const saved = id ? await tx.tournament.update({ where: { id }, data }) : await tx.tournament.create({ data: { ...data, createdById: actor.id } });
+    const saved = id
+      ? await tx.tournament.update({ where: { id }, data })
+      : await tx.tournament.create({ data: { ...data, createdById: actor.id } });
     await tx.tournamentCategory.deleteMany({ where: { tournamentId: saved.id } });
-    await tx.tournamentCategory.createMany({ data: input.categoryIds.map((categoryId) => ({ tournamentId: saved.id, categoryId })) });
+    await tx.tournamentCategory.createMany({
+      data: input.categoryIds.map((categoryId) => ({ tournamentId: saved.id, categoryId })),
+    });
     await tx.tournamentWildcard.deleteMany({ where: { tournamentId: saved.id } });
     const wc = input.wildcards.filter((w) => w.quantity > 0);
     if (wc.length) await tx.tournamentWildcard.createMany({ data: wc.map((w) => ({ tournamentId: saved.id, ...w })) });
     // Clasificatorios: se reemplazan los que todavía no se aplicaron (los aplicados ya inscribieron gente).
     const applied = await tx.tournamentQualifier.findMany({ where: { tournamentId: saved.id, appliedAt: { not: null } } });
     await tx.tournamentQualifier.deleteMany({ where: { tournamentId: saved.id, appliedAt: null } });
-    const fresh = input.qualifiers.filter((q) => !applied.some((a) => a.sourceTournamentId === q.sourceTournamentId && a.fromRank === q.fromRank));
+    const fresh = input.qualifiers.filter(
+      (q) => !applied.some((a) => a.sourceTournamentId === q.sourceTournamentId && a.fromRank === q.fromRank),
+    );
     if (fresh.length) await tx.tournamentQualifier.createMany({ data: fresh.map((q) => ({ tournamentId: saved.id, ...q })) });
     // Cambió el calendario (o se apagó lo automático): los borradores automáticos que ya no coinciden
     // se descartan (sus preguntas vuelven al banco) y el generador arma los nuevos.
@@ -212,7 +248,13 @@ export async function saveTournament(id: string | null, raw: unknown, actor: { i
     }
     return saved;
   });
-  await logAudit({ actorId: actor.id, action: id ? "tournament.update" : "tournament.create", entityType: "Tournament", entityId: t.id, before });
+  await logAudit({
+    actorId: actor.id,
+    action: id ? "tournament.update" : "tournament.create",
+    entityType: "Tournament",
+    entityId: t.id,
+    before,
+  });
   return t;
 }
 
@@ -256,18 +298,17 @@ export async function generateTournamentQuizzes(id: string, actor: { id: string 
       },
     });
   }
-  await logAudit({ actorId: actor.id, action: "tournament.generateQuizzes", entityType: "Tournament", entityId: id, meta: { created: slots.length } });
+  await logAudit({
+    actorId: actor.id,
+    action: "tournament.generateQuizzes",
+    entityType: "Tournament",
+    entityId: id,
+    meta: { created: slots.length },
+  });
   return slots.length;
 }
 
 // ───────────────────────── Inscripción ─────────────────────────
-
-export function registrationState(t: { status: string; registrationOpensAt: Date; registrationEndsAt: Date }, now = new Date()) {
-  if (t.status !== "PUBLISHED") return "CLOSED" as const;
-  if (now < t.registrationOpensAt) return "NOT_YET" as const;
-  if (now >= t.registrationEndsAt) return "CLOSED" as const;
-  return "OPEN" as const;
-}
 
 /** Inscribe al usuario cobrando los créditos. Atómico: cupo y cobro en la misma transacción. */
 export async function enrollInTournament(userId: string, tournamentId: string, now = new Date()) {
@@ -286,7 +327,11 @@ export async function enrollInTournament(userId: string, tournamentId: string, n
       const cap = await knockoutCapacity(tournamentId, tx);
       if (cap.qualifiersOnly) throw new UserError("A este torneo se entra solo por clasificación.");
       if (cap.open <= 0)
-        throw new UserError(cap.reserved ?"No quedan lugares abiertos: los que faltan están reservados para clasificados." : "El torneo ya completó su cupo.");
+        throw new UserError(
+          cap.reserved
+            ? "No quedan lugares abiertos: los que faltan están reservados para clasificados."
+            : "El torneo ya completó su cupo.",
+        );
     } else if (t.maxParticipants && t._count.entries >= t.maxParticipants) throw new UserError("El torneo ya completó su cupo.");
     const ledger =
       t.entryCost > 0
@@ -302,7 +347,9 @@ export async function enrollInTournament(userId: string, tournamentId: string, n
             tx,
           )
         : null;
-    return tx.tournamentEntry.create({ data: { tournamentId, userId, enrolledAt: now, confirmedAt: now, ledgerTxId: ledger?.id } });
+    return tx.tournamentEntry.create({
+      data: { tournamentId, userId, enrolledAt: now, confirmedAt: now, ledgerTxId: ledger?.id },
+    });
   });
 }
 
@@ -340,8 +387,17 @@ export async function cancelTournament(id: string, reason: string, actor: { id: 
   for (const e of t.entries) if (await refundEntry(t, e, `Reembolso: se canceló ${t.name}`, actor)) refunded++;
   await prisma.tournament.update({ where: { id }, data: { status: "CANCELLED", cancelledAt: new Date() } });
   // Los cuestionarios del torneo que no abrieron vuelven a borrador
-  await prisma.quiz.updateMany({ where: { tournamentId: id, opensAt: { gt: new Date() } }, data: { publishedAt: null, status: "DRAFT" } });
-  await logAudit({ actorId: actor.id, action: "tournament.cancel", entityType: "Tournament", entityId: id, meta: { reason, refunded } });
+  await prisma.quiz.updateMany({
+    where: { tournamentId: id, opensAt: { gt: new Date() } },
+    data: { publishedAt: null, status: "DRAFT" },
+  });
+  await logAudit({
+    actorId: actor.id,
+    action: "tournament.cancel",
+    entityType: "Tournament",
+    entityId: id,
+    meta: { reason, refunded },
+  });
   return refunded;
 }
 
@@ -361,7 +417,10 @@ export async function finishTournament(id: string, now = new Date()) {
     return closeTournament(t, rows, now);
   }
   if (t.endsAt > now) return false;
-  const open = await prisma.attempt.findMany({ where: { quiz: { tournamentId: id }, status: "IN_PROGRESS" }, select: { id: true } });
+  const open = await prisma.attempt.findMany({
+    where: { quiz: { tournamentId: id }, status: "IN_PROGRESS" },
+    select: { id: true },
+  });
   for (const a of open) await finalizeAttempt(a.id, now);
   await recomputeTournamentStandings(id, now);
   const standings = await prisma.tournamentStanding.findMany({ where: { tournamentId: id } });
@@ -380,10 +439,21 @@ export async function finishTournament(id: string, now = new Date()) {
   );
 }
 
-type FinalRow = { userId: string; rank: number; points: number; quizzesPlayed: number; quizzesTotal: number; correctCount: number };
+type FinalRow = {
+  userId: string;
+  rank: number;
+  points: number;
+  quizzesPlayed: number;
+  quizzesTotal: number;
+  correctCount: number;
+};
 
 /** Premios, foto de resultados (`TournamentResult`), estado FINISHED, avisos y clasificados a eliminatorias. */
-async function closeTournament(t: { id: string; name: string; slug: string; prizes: Prisma.JsonValue }, rows: FinalRow[], now: Date) {
+async function closeTournament(
+  t: { id: string; name: string; slug: string; prizes: Prisma.JsonValue },
+  rows: FinalRow[],
+  now: Date,
+) {
   const id = t.id;
   const prizes = parsePrizes(t.prizes);
   const prizeOf = new Map<string, { credits: number; stars: number }>();
@@ -443,7 +513,13 @@ async function closeTournament(t: { id: string; name: string; slug: string; priz
       dedupeKey: `tournament.finished:${id}`,
     });
   }
-  await logAudit({ actorId: null, action: "tournament.finish", entityType: "Tournament", entityId: id, meta: { participants: rows.length } });
+  await logAudit({
+    actorId: null,
+    action: "tournament.finish",
+    entityType: "Tournament",
+    entityId: id,
+    meta: { participants: rows.length },
+  });
   logger.info({ tournamentId: id }, "torneo finalizado");
   // Sus primeros puestos clasifican a las eliminatorias que lo usan de clasificatorio.
   try {

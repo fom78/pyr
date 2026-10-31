@@ -6,6 +6,7 @@ import { fileUrl } from "@/server/storage";
 import { getQuizStatus } from "@/server/quiz/status";
 import { readScoring } from "@/server/scoring/attempt";
 import { tournamentSlots } from "@/server/tournaments/auto";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/common";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -126,7 +127,11 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
               thirdPlaceMatch: t.thirdPlaceMatch,
               questionSource: t.questionSource,
               uniqueQuestions: t.uniqueQuestions,
-              qualifiers: t.qualifiers.map((q) => ({ sourceTournamentId: q.sourceTournamentId, fromRank: q.fromRank, topN: q.topN })),
+              qualifiers: t.qualifiers.map((q) => ({
+                sourceTournamentId: q.sourceTournamentId,
+                fromRank: q.fromRank,
+                topN: q.topN,
+              })),
             }}
           />
         ) : (
@@ -150,11 +155,13 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
                   capacity && (
                     <ul className="grid gap-1 text-sm">
                       <li>
-                        Cuadro de hasta {capacity.max}: {capacity.entries} inscriptos, {capacity.reserved} lugares reservados, {capacity.open} abiertos.
+                        Cuadro de hasta {capacity.max}: {capacity.entries} inscriptos, {capacity.reserved} lugares reservados,{" "}
+                        {capacity.open} abiertos.
                       </li>
                       {t.qualifiers.map((q) => (
                         <li key={q.id} className="text-muted-foreground text-xs">
-                          {q.source.name}: {q.fromRank > 1 ? `puestos ${q.fromRank}–${q.topN}` : `primeros ${q.topN}`} · {q.appliedAt ? "ya inscriptos" : "cuando termine"}
+                          {q.source.name}: {q.fromRank > 1 ? `puestos ${q.fromRank}–${q.topN}` : `primeros ${q.topN}`} ·{" "}
+                          {q.appliedAt ? "ya inscriptos" : "cuando termine"}
                         </li>
                       ))}
                     </ul>
@@ -164,76 +171,80 @@ export default async function AdminTournamentPage({ params }: { params: Promise<
             </Card>
           )}
           {!ko && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">
-                Cuestionarios ({slots.filter((x) => x.quiz).length}/{t.quizCount})
-              </CardTitle>
-              <p className="text-muted-foreground text-xs">
-                {t.autoQuizzes
-                  ? `Se arman solos con el banco de sus categorías (${t.questionsPerQuiz} preguntas) mientras el torneo está publicado, y pasan por "Por aprobar".`
-                  : "Manuales: generá los que faltan y cargales las preguntas."}
-              </p>
-            </CardHeader>
-            <CardContent className="grid gap-2">
-              {slots.map((x) =>
-                x.quiz ? (
-                  <Link
-                    key={x.at.toISOString()}
-                    href={`/admin/cuestionarios/${x.quiz.id}`}
-                    className="hover:bg-accent/50 flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
-                  >
-                    <span>
-                      {x.quiz.title}
-                      <span className="text-muted-foreground block text-xs">
-                        {formatDateTime(x.at, tz)} · {x.quiz.questions}/{t.questionsPerQuiz} preguntas
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">
+                  Cuestionarios ({slots.filter((x) => x.quiz).length}/{t.quizCount})
+                </CardTitle>
+                <p className="text-muted-foreground text-xs">
+                  {t.autoQuizzes
+                    ? `Se arman solos con el banco de sus categorías (${t.questionsPerQuiz} preguntas) mientras el torneo está publicado, y pasan por "Por aprobar".`
+                    : "Manuales: generá los que faltan y cargales las preguntas."}
+                </p>
+              </CardHeader>
+              <CardContent className="grid gap-2">
+                {slots.map((x) =>
+                  x.quiz ? (
+                    <Link
+                      key={x.at.toISOString()}
+                      href={`/admin/cuestionarios/${x.quiz.id}`}
+                      className="hover:bg-accent/50 flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
+                    >
+                      <span>
+                        {x.quiz.title}
+                        <span className="text-muted-foreground block text-xs">
+                          {formatDateTime(x.at, tz)} · {x.quiz.questions}/{t.questionsPerQuiz} preguntas
+                        </span>
                       </span>
-                    </span>
-                    <Badge variant={x.quiz.published ? "default" : "outline"}>{x.quiz.published ? "Publicado" : "Borrador"}</Badge>
-                  </Link>
-                ) : (
-                  <div
-                    key={x.at.toISOString()}
-                    className="text-muted-foreground flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm"
-                  >
-                    <span>
-                      Fecha {x.n}
-                      <span className="block text-xs">{formatDateTime(x.at, tz)}</span>
-                    </span>
-                    <span className="text-xs">
-                      {x.skipped
-                        ? "Salteado"
-                        : !t.autoQuizzes
-                          ? "Sin cuestionario"
-                          : t.status === "DRAFT"
-                            ? "Se arma al publicar"
-                            : "Se arma pronto"}
-                    </span>
-                  </div>
-                ),
-              )}
-              {t.quizzes
-                .filter((q) => !inSlots.has(q.id))
-                .map((q) => (
-                  <Link
-                    key={q.id}
-                    href={`/admin/cuestionarios/${q.id}`}
-                    className="hover:bg-accent/50 flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
-                  >
-                    <span>
-                      {q.title}
-                      <span className="text-muted-foreground block text-xs">
-                        {formatDateTime(q.opensAt, tz)} · fuera del calendario · {q._count.questions} preguntas
+                      <Badge variant={x.quiz.published ? "default" : "outline"}>
+                        {x.quiz.published ? "Publicado" : "Borrador"}
+                      </Badge>
+                    </Link>
+                  ) : (
+                    <div
+                      key={x.at.toISOString()}
+                      className="text-muted-foreground flex items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm"
+                    >
+                      <span>
+                        Fecha {x.n}
+                        <span className="block text-xs">{formatDateTime(x.at, tz)}</span>
                       </span>
-                    </span>
-                    <QuizStatusBadge status={getQuizStatus(q)} />
-                  </Link>
-                ))}
-              <Link href={`/admin/cuestionarios/nuevo?ref=t:${t.id}`} className="text-primary text-sm hover:underline">
-                + Agregar cuestionario manualmente
-              </Link>
-            </CardContent>
-          </Card>
+                      <span className={cn("text-xs", !x.skipped && x.closesAt <= now && "text-destructive font-medium")}>
+                        {x.skipped
+                          ? "Salteado"
+                          : x.closesAt <= now
+                            ? "No salió"
+                            : !t.autoQuizzes
+                              ? "Sin cuestionario"
+                              : t.status === "DRAFT"
+                                ? "Se arma al publicar"
+                                : "Se arma pronto"}
+                      </span>
+                    </div>
+                  ),
+                )}
+                {t.quizzes
+                  .filter((q) => !inSlots.has(q.id))
+                  .map((q) => (
+                    <Link
+                      key={q.id}
+                      href={`/admin/cuestionarios/${q.id}`}
+                      className="hover:bg-accent/50 flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
+                    >
+                      <span>
+                        {q.title}
+                        <span className="text-muted-foreground block text-xs">
+                          {formatDateTime(q.opensAt, tz)} · fuera del calendario · {q._count.questions} preguntas
+                        </span>
+                      </span>
+                      <QuizStatusBadge status={getQuizStatus(q)} />
+                    </Link>
+                  ))}
+                <Link href={`/admin/cuestionarios/nuevo?ref=t:${t.id}`} className="text-primary text-sm hover:underline">
+                  + Agregar cuestionario manualmente
+                </Link>
+              </CardContent>
+            </Card>
           )}
           {series.length > 0 && (
             <Card>

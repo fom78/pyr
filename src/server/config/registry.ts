@@ -17,7 +17,17 @@ type Def<T extends z.ZodType> = {
   unit?: string;
 };
 
-export type SettingGroup = "Liga" | "Cuestionarios" | "Automático" | "Puntaje" | "Juego" | "Créditos" | "Torneos" | "Avisos" | "Moderación";
+export type SettingGroup =
+  | "Liga"
+  | "Cuestionarios"
+  | "Automático"
+  | "Puntaje"
+  | "Juego"
+  | "Créditos"
+  | "Torneos"
+  | "Avisos"
+  | "Moderación"
+  | "Colaboraciones";
 
 const int = (min: number, max: number) => z.number().int().min(min).max(max);
 
@@ -360,6 +370,17 @@ export const settingsRegistry = {
     default: true,
     label: "Los moderadores pueden publicar cuestionarios",
     group: "Moderación",
+  }),
+  // ── Colaboraciones ──
+  "support.cafecitoUrl": def({
+    schema: z.union([
+      z.literal(""),
+      z.url().startsWith("https://cafecito.app/", "Tiene que ser un enlace de https://cafecito.app/"),
+    ]),
+    default: "https://cafecito.app/fom78",
+    label: "Enlace de Cafecito",
+    help: "Página de Cafecito para pedir colaboraciones (menú, /colaborar y resultado de torneos). Vacío = no se muestra en ningún lado.",
+    group: "Colaboraciones",
   }),
 } as const;
 

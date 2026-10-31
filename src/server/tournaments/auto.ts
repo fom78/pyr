@@ -5,7 +5,8 @@ import type { Settings } from "@/server/config/registry";
 import { logAudit } from "@/server/audit";
 import { logger } from "@/server/logger";
 import { notifyStaff } from "@/server/notifications/service";
-import { draftQuestionsInclude, loadCandidates, topUpDraft } from "@/server/autoquiz/service";
+import { draftQuestionsInclude, SYSTEM_ACTOR, topUpDraft, tournamentPools } from "@/server/autoquiz/service";
+import { publishQuiz } from "@/server/quiz/service";
 import { formatDateTime } from "@/lib/format";
 import { mergePools, pickAcrossCategories, type CategoryPool } from "./pick";
 import { tournamentTimeline } from "./timeline";
@@ -24,8 +25,19 @@ async function autoTournaments(now: Date, db: Db) {
   });
 }
 
+/** Candidatas del torneo: siempre con reutilizadas y, como último recurso, cualquier aprobada libre. */
 async function poolsFor(t: AutoTournament, s: Settings, now: Date, db: Db): Promise<CategoryPool[]> {
-  return Promise.all(t.categories.map((c) => loadCandidates(c.categoryId, s, now, db)));
+  return tournamentPools(
+    t.categories.map((c) => c.categoryId),
+    s,
+    now,
+    db,
+  );
+}
+
+/** Cierre de un turno: `quizActiveHours` después de abrir, sin pasarse del fin del torneo. */
+function slotCloses(t: Tournament, at: Date) {
+  return new Date(Math.min(at.getTime() + t.quizActiveHours * HOUR, t.endsAt.getTime()));
 }
 
 function removeIds(pools: CategoryPool[], ids: Set<string>): CategoryPool[] {
@@ -47,8 +59,11 @@ export async function tournamentSlots(t: Tournament, now = new Date(), db: Db = 
     return {
       at,
       n: i + 1,
+      closesAt: slotCloses(t, at),
       skipped: !quiz && skipped.has(at.getTime()),
-      quiz: quiz ? { id: quiz.id, title: quiz.title, questions: quiz._count.questions, published: Boolean(quiz.publishedAt) } : null,
+      quiz: quiz
+        ? { id: quiz.id, title: quiz.title, questions: quiz._count.questions, published: Boolean(quiz.publishedAt) }
+        : null,
     };
   });
 }
@@ -56,8 +71,8 @@ export async function tournamentSlots(t: Tournament, now = new Date(), db: Db = 
 /**
  * Arma los borradores de los torneos con cuestionarios automáticos (tarea `autoquiz`): uno por turno
  * que todavía no tiene cuestionario, hasta `autoquiz.horizonDays`. Las preguntas salen del banco de
- * sus categorías (nuevas primero y repartidas; si faltan, reutilizadas). Después siguen el mismo
- * camino que los de la liga: aprobar, publicación automática o descarte al llegar la apertura.
+ * sus categorías (nuevas primero y repartidas; si faltan, reutilizadas; en último caso cualquier
+ * aprobada libre). Un turno que ya abrió y sigue vigente se rescata: se arma y se publica en el acto.
  */
 export async function generateTournamentDrafts(now = new Date(), db: Db = prisma) {
   const s = await getSettings(db);
@@ -66,13 +81,18 @@ export async function generateTournamentDrafts(now = new Date(), db: Db = prisma
   let incomplete = 0;
   for (const t of await autoTournaments(now, db)) {
     if (!t.categories.length) continue;
-    const missingSlots = (await tournamentSlots(t, now, db)).filter((x) => !x.quiz && !x.skipped && x.at > now && x.at <= until);
+    const missingSlots = (await tournamentSlots(t, now, db)).filter(
+      (x) => !x.quiz && !x.skipped && slotCloses(t, x.at) > now && x.at <= until,
+    );
     if (!missingSlots.length) continue;
     let pools = await poolsFor(t, s, now, db);
     for (const slot of missingSlots) {
-      const { picks, missing } = pickAcrossCategories(pools, t.questionsPerQuiz, { allowReuse: s["autoquiz.allowReuse"] });
+      const { picks, missing } = pickAcrossCategories(pools, t.questionsPerQuiz, { allowReuse: true });
       pools = removeIds(pools, new Set(picks.map((p) => p.id)));
-      const closesAt = new Date(Math.min(slot.at.getTime() + t.quizActiveHours * HOUR, t.endsAt.getTime()));
+      const closesAt = slotCloses(t, slot.at);
+      const late = slot.at <= now;
+      // Ya abrió y no hay ni una pregunta: no tiene sentido un borrador (se descartaría igual).
+      if (late && !picks.length) continue;
       try {
         const quiz = await db.quiz.create({
           data: {
@@ -90,9 +110,30 @@ export async function generateTournamentDrafts(now = new Date(), db: Db = prisma
         created++;
         if (missing) incomplete++;
         await logAudit(
-          { actorId: null, action: "quiz.autoCreate", entityType: "Quiz", entityId: quiz.id, meta: { tournamentId: t.id, slotAt: slot.at, missing } },
+          {
+            actorId: null,
+            action: "quiz.autoCreate",
+            entityType: "Quiz",
+            entityId: quiz.id,
+            meta: { tournamentId: t.id, slotAt: slot.at, missing },
+          },
           db,
         );
+        if (late) {
+          await publishQuiz(quiz.id, SYSTEM_ACTOR, now);
+          await notifyStaff(
+            {
+              level: "INFO",
+              kind: "tournament.slotRescued",
+              title: `${t.name}: se rescató la fecha ${slot.n}`,
+              body: `La fecha ${slot.n} ya había abierto sin cuestionario; se armó con ${picks.length} pregunta(s) y se publicó en el acto (cierra ${formatDateTime(closesAt)}).`,
+              href: `/admin/torneos/${t.id}`,
+              dedupeKey: `tournament.slotRescued:${quiz.id}`,
+            },
+            now,
+            db,
+          );
+        }
       } catch (err) {
         // Otra corrida creó el mismo turno en paralelo (índice único [tournamentId, slotAt]).
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") continue;
@@ -120,11 +161,20 @@ export async function fillTournamentDrafts(now = new Date(), db: Db = prisma) {
     let pools = mergePools(await poolsFor(t, s, now, db));
     for (const quiz of drafts) {
       if (!pools.fresh.length && !pools.reusable.length) break;
-      const r = await topUpDraft(quiz, pools, t.questionsPerQuiz, s["autoquiz.allowReuse"], null, db);
+      const r = await topUpDraft(quiz, pools, t.questionsPerQuiz, true, null, db);
       pools = r.pools;
       if (r.added) {
         filled++;
-        await logAudit({ actorId: null, action: "quiz.autoFill", entityType: "Quiz", entityId: quiz.id, meta: { added: r.added, missing: r.missing } }, db);
+        await logAudit(
+          {
+            actorId: null,
+            action: "quiz.autoFill",
+            entityType: "Quiz",
+            entityId: quiz.id,
+            meta: { added: r.added, missing: r.missing },
+          },
+          db,
+        );
       }
     }
   }
@@ -142,7 +192,7 @@ export async function notifyTournamentBank(now = new Date(), db: Db = prisma) {
     const pending = (await tournamentSlots(t, now, db)).filter((x) => !x.quiz && !x.skipped && x.at > now);
     if (!pending.length) continue;
     const pools = mergePools(await poolsFor(t, s, now, db));
-    const available = pools.fresh.length + (s["autoquiz.allowReuse"] ? pools.reusable.length : 0);
+    const available = pools.fresh.length + pools.reusable.length;
     const need = pending.length * t.questionsPerQuiz;
     if (available >= need) continue;
     const critical = available < t.questionsPerQuiz;

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Coins, History, LifeBuoy, LogOut, MessageSquareWarning, Moon, Shield, Sun, User } from "lucide-react";
+import { Coffee, Coins, History, LifeBuoy, LogOut, MessageSquareWarning, Moon, Shield, Sun, User } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,9 +21,11 @@ type Props = {
   username: string | null;
   image: string | null;
   showAdmin: boolean;
+  /** Hay enlace de Cafecito configurado. */
+  showSupport: boolean;
 };
 
-export function UserMenu({ name, username, image, showAdmin }: Props) {
+export function UserMenu({ name, username, image, showAdmin, showSupport }: Props) {
   const { resolvedTheme, setTheme } = useTheme();
   const initials = name.slice(0, 2).toUpperCase();
   // El reporte guarda la página desde la que se abrió (ayuda a reproducir errores).
@@ -42,7 +44,7 @@ export function UserMenu({ name, username, image, showAdmin }: Props) {
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel>
           <div className="truncate font-medium">{name}</div>
-          {username && <div className="truncate text-xs font-normal text-muted-foreground">@{username}</div>}
+          {username && <div className="text-muted-foreground truncate text-xs font-normal">@{username}</div>}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
@@ -71,6 +73,13 @@ export function UserMenu({ name, username, image, showAdmin }: Props) {
             <LifeBuoy /> Mis reportes
           </Link>
         </DropdownMenuItem>
+        {showSupport && (
+          <DropdownMenuItem asChild>
+            <Link href="/colaborar">
+              <Coffee /> Colaborar con PyR
+            </Link>
+          </DropdownMenuItem>
+        )}
         {showAdmin && (
           <DropdownMenuItem asChild>
             <Link href="/admin">

@@ -11,7 +11,7 @@ function coerce(key: SettingKey, raw: FormDataEntryValue[]) {
   const def = settingsRegistry[key].default;
   if (typeof def === "boolean") return raw.map(String).includes("true");
   if (typeof def === "number") return Number(raw[0]);
-  return String(raw[0]);
+  return String(raw[0]).trim();
 }
 
 export async function saveConfigAction(_prev: FormState, fd: FormData): Promise<FormState> {

@@ -16,7 +16,7 @@ export type ConfigField = {
   label: string;
   help?: string;
   unit?: string;
-  kind: "number" | "boolean" | "enum";
+  kind: "number" | "boolean" | "enum" | "text";
   options?: string[];
   value: string | number | boolean;
   default: string | number | boolean;
@@ -28,7 +28,7 @@ export function ConfigForm({ groups }: { groups: { name: string; fields: ConfigF
   return (
     <form action={action} className="grid gap-6">
       <FormError message={state?.error} />
-      {state?.message && <p className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">{state.message}</p>}
+      {state?.message && <p className="bg-success/10 text-success rounded-md px-3 py-2 text-sm">{state.message}</p>}
       {groups.map((g) => (
         <Card key={g.name}>
           <CardHeader>
@@ -41,7 +41,7 @@ export function ConfigForm({ groups }: { groups: { name: string; fields: ConfigF
               return (
                 <div key={f.key} className="grid content-start gap-1.5">
                   <Label htmlFor={id} className="flex flex-wrap items-center gap-1.5">
-                    {f.label} {f.unit && <span className="font-normal text-muted-foreground">({f.unit})</span>}
+                    {f.label} {f.unit && <span className="text-muted-foreground font-normal">({f.unit})</span>}
                     {f.categoryOverride && (
                       <Badge variant="outline" className="text-[10px]">
                         por categoría
@@ -61,13 +61,23 @@ export function ConfigForm({ groups }: { groups: { name: string; fields: ConfigF
                         </option>
                       ))}
                     </NativeSelect>
+                  ) : f.kind === "text" ? (
+                    <Input id={id} name={f.key} defaultValue={String(f.value)} aria-invalid={err ? true : undefined} />
                   ) : (
-                    <Input id={id} name={f.key} type="number" step="any" defaultValue={String(f.value)} required aria-invalid={err ? true : undefined} />
+                    <Input
+                      id={id}
+                      name={f.key}
+                      type="number"
+                      step="any"
+                      defaultValue={String(f.value)}
+                      required
+                      aria-invalid={err ? true : undefined}
+                    />
                   )}
-                  {f.help && <p className="text-xs text-muted-foreground">{f.help}</p>}
-                  <p className="text-xs text-muted-foreground">Por defecto: {String(f.default)}</p>
+                  {f.help && <p className="text-muted-foreground text-xs">{f.help}</p>}
+                  <p className="text-muted-foreground text-xs">Por defecto: {String(f.default) || "(vacío)"}</p>
                   {err?.map((e) => (
-                    <p key={e} className="text-sm text-destructive">
+                    <p key={e} className="text-destructive text-sm">
                       {e}
                     </p>
                   ))}

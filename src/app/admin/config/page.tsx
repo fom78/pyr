@@ -22,7 +22,14 @@ export default async function ConfigPage() {
       schema: { options?: readonly string[] };
     };
     const value = s[key];
-    const kind = typeof def.default === "boolean" ? "boolean" : typeof def.default === "number" ? "number" : "enum";
+    const kind =
+      typeof def.default === "boolean"
+        ? "boolean"
+        : typeof def.default === "number"
+          ? "number"
+          : def.schema.options
+            ? "enum"
+            : "text";
     const options = kind === "enum" ? [...(def.schema.options ?? [])] : undefined;
     const list = groups.get(def.group) ?? [];
     list.push({

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseMpLinks } from "@/server/support/links";
 
 /**
  * Registro de parámetros de negocio configurables.
@@ -15,6 +16,8 @@ type Def<T extends z.ZodType> = {
   categoryOverride?: boolean;
   /** Unidad para mostrar en el formulario. */
   unit?: string;
+  /** Texto de varias líneas (textarea en el formulario). */
+  multiline?: boolean;
 };
 
 export type SettingGroup =
@@ -372,6 +375,33 @@ export const settingsRegistry = {
     group: "Moderación",
   }),
   // ── Colaboraciones ──
+  "support.mpEnabled": def({
+    schema: z.boolean(),
+    default: true,
+    label: "Mostrar los links de Mercado Pago",
+    help: "Botones por monto en /colaborar. Si ni esto ni Cafecito están activos (o no tienen links), “Colaborar” no aparece en ningún lado.",
+    group: "Colaboraciones",
+  }),
+  "support.mpLinks": def({
+    schema: z
+      .string()
+      .max(2000)
+      .superRefine((v, ctx) => {
+        for (const message of parseMpLinks(v).errors) ctx.addIssue({ code: "custom", message });
+      }),
+    default: "",
+    label: "Links de pago de Mercado Pago",
+    help: "Uno por línea: etiqueta | link. Por ejemplo “☕ $1.000 | https://mpago.la/abc123”. Se crean en Mercado Pago → Cobrar → Link de pago (uno por monto). Cada botón abre directo el pago.",
+    group: "Colaboraciones",
+    multiline: true,
+  }),
+  "support.cafecitoEnabled": def({
+    schema: z.boolean(),
+    default: true,
+    label: "Mostrar Cafecito",
+    help: "Botón a tu página de Cafecito en /colaborar.",
+    group: "Colaboraciones",
+  }),
   "support.cafecitoUrl": def({
     schema: z.union([
       z.literal(""),

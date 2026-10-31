@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { saveConfigAction } from "./actions";
 
 export type ConfigField = {
@@ -16,7 +17,7 @@ export type ConfigField = {
   label: string;
   help?: string;
   unit?: string;
-  kind: "number" | "boolean" | "enum" | "text";
+  kind: "number" | "boolean" | "enum" | "text" | "textarea";
   options?: string[];
   value: string | number | boolean;
   default: string | number | boolean;
@@ -61,6 +62,15 @@ export function ConfigForm({ groups }: { groups: { name: string; fields: ConfigF
                         </option>
                       ))}
                     </NativeSelect>
+                  ) : f.kind === "textarea" ? (
+                    <Textarea
+                      id={id}
+                      name={f.key}
+                      rows={4}
+                      defaultValue={String(f.value)}
+                      className="font-mono text-xs"
+                      aria-invalid={err ? true : undefined}
+                    />
                   ) : f.kind === "text" ? (
                     <Input id={id} name={f.key} defaultValue={String(f.value)} aria-invalid={err ? true : undefined} />
                   ) : (

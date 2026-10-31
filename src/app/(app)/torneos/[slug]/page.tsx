@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/server/auth/session";
 import { getSettings } from "@/server/config/service";
+import { supportOptions } from "@/server/support/links";
 import { prisma } from "@/server/db";
 import { getBalance } from "@/server/credits/service";
 import { registrationState } from "@/server/tournaments/service";
@@ -215,7 +216,7 @@ export default async function TournamentPage({
               <> · ganaste {prizeText({ credits: result.prizeCredits, stars: result.prizeStars })}</>
             )}
             .
-            {settings["support.cafecitoUrl"] && (
+            {supportOptions(settings).visible && (
               <span className="text-muted-foreground mt-2 block text-xs">
                 ¿Te gustó el torneo? PyR se mantiene con colaboraciones:{" "}
                 <Link href="/colaborar" className="text-primary underline-offset-2 hover:underline">

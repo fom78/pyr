@@ -186,3 +186,28 @@ export async function skipDraftAction(quizId: string) {
   const user = await authorize("quiz.manage");
   return simple(() => deleteDraftQuiz(quizId, user), "/admin/cuestionarios/por-aprobar");
 }
+
+/** "Por aprobar": aprueba varios borradores de una. Los que no se pueden publicar se informan sin cortar al resto. */
+export async function publishDraftsAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  try {
+    const user = await authorize("quiz.publish");
+    const ids = [...new Set(fd.getAll("id").map(String).filter(Boolean))];
+    if (ids.length === 0) return { error: "No seleccionaste ningún borrador." };
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        await publishQuiz(id, user);
+      } catch (err) {
+        const state = toFormState(err);
+        failed.push(state?.error ?? "error");
+      }
+    }
+    revalidatePath("/admin/cuestionarios/por-aprobar");
+    revalidatePath("/admin");
+    const ok = ids.length - failed.length;
+    if (!failed.length) return { ok: true, message: `Se aprobaron ${ok} cuestionario${ok === 1 ? "" : "s"}.` };
+    return { error: `Se aprobaron ${ok} de ${ids.length}. No se pudo: ${[...new Set(failed)].join(" · ")}` };
+  } catch (err) {
+    return toFormState(err);
+  }
+}

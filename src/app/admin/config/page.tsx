@@ -19,7 +19,8 @@ export default async function ConfigPage() {
       group: SettingGroup;
       default: unknown;
       categoryOverride?: boolean;
-      schema: { options?: readonly string[] };
+      multiline?: boolean;
+      schema: { options?: readonly unknown[] };
     };
     const value = s[key];
     const kind =
@@ -27,10 +28,13 @@ export default async function ConfigPage() {
         ? "boolean"
         : typeof def.default === "number"
           ? "number"
-          : def.schema.options
+          : // Solo z.enum: un z.union también tiene `options`, pero son schemas.
+            def.schema.options?.every((o) => typeof o === "string")
             ? "enum"
-            : "text";
-    const options = kind === "enum" ? [...(def.schema.options ?? [])] : undefined;
+            : def.multiline
+              ? "textarea"
+              : "text";
+    const options = kind === "enum" ? (def.schema.options as string[]) : undefined;
     const list = groups.get(def.group) ?? [];
     list.push({
       key,

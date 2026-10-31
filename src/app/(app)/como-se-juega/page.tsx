@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { getSettings } from "@/server/config/service";
+import { supportOptions } from "@/server/support/links";
 import { prisma } from "@/server/db";
 import { rulesFromSettings } from "@/server/rules/view";
 import { defaultRulesTexts, type RulesSection } from "@/server/rules/defaults";
@@ -218,7 +219,7 @@ export default async function HowToPlayPage() {
           </Section>
         </TabsContent>
       </Tabs>
-      {s["support.cafecitoUrl"] && (
+      {supportOptions(s).visible && (
         <p className="text-muted-foreground mt-8 text-center text-sm">
           PyR es gratis y se mantiene con colaboraciones.{" "}
           <Link href="/colaborar" className="text-primary underline-offset-2 hover:underline">

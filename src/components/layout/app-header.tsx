@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { getCurrentUser, userCan } from "@/server/auth/session";
 import { getBalance } from "@/server/credits/service";
 import { getSettings } from "@/server/config/service";
+import { supportOptions } from "@/server/support/links";
 import { unreadCount } from "@/server/notifications/service";
 import { fileUrl } from "@/server/storage";
 import { formatNumber } from "@/lib/format";
@@ -51,7 +52,7 @@ export async function AppHeader() {
                 username={user.username}
                 image={user.image ? fileUrl(user.image) : null}
                 showAdmin={showAdmin}
-                showSupport={Boolean(settings?.["support.cafecitoUrl"])}
+                showSupport={settings ? supportOptions(settings).visible : false}
               />
             </>
           ) : (
